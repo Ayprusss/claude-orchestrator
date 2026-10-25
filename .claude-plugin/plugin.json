@@ -1,0 +1,6 @@
+{
+  "name": "orchestrator",
+  "version": "0.1.0",
+  "description": "Orchestrator dashboard: queue and run many Claude Code sessions across projects in parallel, with in-pane docs.",
+  "types": "./types/index.d.ts"
+}

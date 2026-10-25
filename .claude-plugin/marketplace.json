@@ -1,0 +1,5 @@
+{
+  "name": "claude-orchestrator",
+  "owner": { "name": "Ayprusss" },
+  "plugins": [{ "name": "orchestrator", "source": "./" }]
+}
