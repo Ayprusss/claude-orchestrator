@@ -48,6 +48,10 @@ export type OrchDraft = {
   projPath: string
 }
 
+// Whether the HUD's local server should run in this session (it restarts
+// after a reload while this is on).
+export type OrchHud = { isOn: boolean }
+
 declare module 'claude-code' {
   interface PluginState {
     orchestrator: {
@@ -56,6 +60,7 @@ declare module 'claude-code' {
       settings: Shaped<OrchSettings>
       view: Shaped<OrchView>
       draft: Shaped<OrchDraft>
+      hud: Shaped<OrchHud>
     }
   }
 }

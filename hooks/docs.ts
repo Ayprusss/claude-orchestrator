@@ -148,4 +148,42 @@ A project path the tool has not seen is registered automatically if you pass an 
 
 Projects and settings are kept across sessions. The task list lives with the current session.`,
   },
+  {
+    id: 'hud',
+    title: 'HUD',
+    body: `# The HUD
+
+A visual dashboard for the orchestrator in your browser: an animated orb you talk to, with every task orbiting it.
+
+Open it with ${'`/orchestrator-hud`'}, or the **HUD** button at the end of this pane's tab row. Stop it with ${'`/orchestrator-hud stop`'}.
+
+## What it shows
+
+- **The orb** shows what the main session is doing: cyan while standing by, blue while it thinks, amber while it runs a tool, and it ripples while a reply streams in.
+- **Moons**: each running task orbits the inner ring and each queued task the outer one. A beam marks a launch, and a burst marks a finish (green for done, red for failed). Click a moon to open the task.
+- **Operations** (left): every task, with live timers. Click one for its prompt, output, and Kill, Retry or Remove.
+- **Comms** (right): the main conversation, mirrored. It includes what you type in the terminal, and replies stream in as they are written.
+
+## Talking to it
+
+- **TALK** sends your text to this Claude Code session as a prompt, the same as typing it here. The session can then dispatch tasks itself. HUD prompts tell Claude to keep its replies short, since they may be read aloud.
+- **DISPATCH** queues a task directly, in the project you pick, with no conversation.
+- **Mic** (Chrome or Edge): speak, and the text is sent when you stop.
+- **Speaker** (top right): reads replies and task completions aloud.
+
+A prompt sent while the session is busy waits (shown dimmed) until the session is idle.
+
+## How it works
+
+The mod starts a small local server (${'`web/server.mjs`'}, Node 18+, no packages) on ${'`127.0.0.1:4747`'}, or the next free port. Every request needs a random token that is kept in the mod's store and included in the link, and the server only answers on 127.0.0.1. It exits on its own if the session goes away. A reload restarts the server, and an open tab reconnects by itself.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| "HUD server exited" | Node.js is not installed or not on PATH |
+| The browser does not open | Open the link that ${'`/orchestrator-hud`'} prints |
+| LINK LOST | The session ended or reloaded; it reconnects when the server is back |
+| No mic button | The browser has no speech recognition: use Chrome or Edge |`,
+  },
 ]

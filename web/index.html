@@ -1,0 +1,1216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orchestrator HUD</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3E%3Ccircle cx='15' cy='15' r='9' fill='none' stroke='%235ce1ff' stroke-width='2'/%3E%3Ccircle cx='15' cy='15' r='3.5' fill='%235ce1ff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #02060b;
+  --bg2: #04101a;
+  --cyan: #5ce1ff;
+  --cyan-2: rgba(92, 225, 255, .55);
+  --line: rgba(92, 225, 255, .16);
+  --line-2: rgba(92, 225, 255, .32);
+  --glass: rgba(5, 16, 26, .58);
+  --text: #d3ecf7;
+  --muted: #6f8ea3;
+  --amber: #ffb547;
+  --green: #3df5a0;
+  --red: #ff4d6d;
+  --slate: #71859b;
+  --violet: #8ea6ff;
+  --head: 'Rajdhani', 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: radial-gradient(ellipse at 50% 42%, #072033 0%, var(--bg2) 38%, var(--bg) 75%);
+  color: var(--text);
+  font: 14px/1.45 var(--head);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+body::after { /* scan lines */
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 50;
+  background: repeating-linear-gradient(to bottom, rgba(255,255,255,.018) 0 1px, transparent 1px 3px);
+}
+#orb { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+::selection { background: rgba(92,225,255,.3); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.app {
+  position: relative; z-index: 1; height: 100%;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr minmax(300px, 380px);
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas: 'top top top' 'left stage right' 'left console right';
+  gap: 14px; padding: 14px 16px 16px;
+}
+
+/* ---- header ---- */
+header {
+  grid-area: top; display: flex; align-items: center; gap: 18px;
+  padding: 8px 14px; border: 1px solid var(--line); background: linear-gradient(90deg, rgba(5,16,26,.7), rgba(5,16,26,.25));
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand svg { flex: none; }
+.brand b { font-size: 19px; letter-spacing: .32em; font-weight: 700; color: #e8f8ff; }
+.brand small { display: block; font: 10px var(--mono); letter-spacing: .2em; color: var(--muted); margin-top: -2px; }
+.stats { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.stat { font: 11px var(--mono); letter-spacing: .08em; padding: 4px 9px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.stat i { font-style: normal; color: var(--text); font-weight: 500; margin-left: 4px; }
+.stat.run i { color: var(--amber); } .stat.done i { color: var(--green); } .stat.fail i { color: var(--red); }
+.right-tools { display: flex; align-items: center; gap: 10px; }
+.link { display: flex; align-items: center; gap: 7px; font: 11px var(--mono); letter-spacing: .14em; color: var(--muted); }
+.link .led { width: 8px; height: 8px; border-radius: 50%; background: var(--red); box-shadow: 0 0 8px var(--red); }
+.link.on .led { background: var(--green); box-shadow: 0 0 10px var(--green); }
+#clock { font: 13px var(--mono); color: var(--cyan); letter-spacing: .1em; min-width: 72px; text-align: right; }
+.icon-btn {
+  display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
+  background: transparent; border: 1px solid var(--line); color: var(--muted); transition: .2s;
+}
+.icon-btn:hover { border-color: var(--line-2); color: var(--cyan); }
+.icon-btn.on { color: var(--cyan); border-color: var(--cyan-2); box-shadow: inset 0 0 12px rgba(92,225,255,.15); }
+
+/* ---- panels ---- */
+.panel {
+  position: relative; min-height: 0; display: flex; flex-direction: column;
+  background: var(--glass); border: 1px solid var(--line);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.panel::before, .panel::after { /* corner brackets */
+  content: ''; position: absolute; width: 14px; height: 14px; border: 2px solid var(--cyan-2); pointer-events: none;
+}
+.panel::before { top: -2px; left: -2px; border-right: 0; border-bottom: 0; }
+.panel::after { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+.panel h2 {
+  margin: 0; padding: 11px 14px 9px; font-size: 13px; font-weight: 700; letter-spacing: .28em; color: var(--cyan);
+  display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line);
+}
+.panel h2 .count { font: 11px var(--mono); color: var(--muted); letter-spacing: .05em; margin-left: auto; }
+.left { grid-area: left; }
+.right { grid-area: right; }
+.scroll { overflow-y: auto; flex: 1; min-height: 0; }
+
+/* sessions */
+.task {
+  display: grid; grid-template-columns: 14px 1fr auto; gap: 2px 10px; align-items: center;
+  width: 100%; padding: 9px 14px; text-align: left; background: transparent; border: 0;
+  border-bottom: 1px solid rgba(92,225,255,.06); transition: background .15s;
+}
+.task:hover, .task.sel { background: rgba(92,225,255,.07); }
+.task.sel { box-shadow: inset 2px 0 0 var(--cyan); }
+.task .dot { width: 9px; height: 9px; border-radius: 50%; grid-row: span 2; }
+.task .t { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task .el { font: 11px var(--mono); color: var(--muted); }
+.task .m { grid-column: 2 / 4; font: 11px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dot.running { background: var(--amber); box-shadow: 0 0 10px var(--amber); animation: pulse 1.2s ease-in-out infinite; }
+.dot.queued { border: 1px solid var(--slate); }
+.dot.done { background: var(--green); box-shadow: 0 0 6px rgba(61,245,160,.6); }
+.dot.failed { background: var(--red); box-shadow: 0 0 8px var(--red); }
+.dot.killed { background: #3a4654; }
+@keyframes pulse { 50% { transform: scale(.6); opacity: .6; } }
+.panel-foot { display: flex; gap: 8px; padding: 9px 14px; border-top: 1px solid var(--line); }
+.ghost {
+  background: transparent; border: 1px solid var(--line); color: var(--muted);
+  padding: 5px 11px; font: 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; transition: .15s;
+}
+.ghost:hover { color: var(--cyan); border-color: var(--line-2); }
+.ghost.warn:hover { color: var(--red); border-color: rgba(255,77,109,.5); }
+.empty { padding: 22px 16px; color: var(--muted); font: 12px/1.6 var(--mono); }
+
+/* comms */
+.msg { padding: 10px 14px; border-bottom: 1px solid rgba(92,225,255,.05); animation: rise .35s ease-out; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.msg .who { font: 10px var(--mono); letter-spacing: .2em; color: var(--muted); margin-bottom: 3px; display: flex; gap: 8px; }
+.msg .who time { margin-left: auto; letter-spacing: .05em; }
+.msg.user .who { color: var(--violet); }
+.msg.assistant .who { color: var(--cyan); }
+.msg .body { font: 13px/1.55 var(--mono); color: var(--text); word-wrap: break-word; }
+.msg.user .body { color: #c9d4ff; }
+.msg.system { padding: 6px 14px; }
+.msg.system .body { font-size: 11px; color: var(--muted); }
+.msg.system.done .body { color: var(--green); } .msg.system.failed .body { color: var(--red); }
+.msg.pending { opacity: .55; }
+.msg .body pre { background: rgba(0,0,0,.35); border: 1px solid var(--line); padding: 8px; overflow-x: auto; font-size: 12px; margin: 6px 0; }
+.msg .body code { background: rgba(92,225,255,.08); padding: 0 4px; }
+.msg .body pre code { background: none; padding: 0; }
+.msg .body strong { color: #fff; }
+.caret::after { content: '▍'; color: var(--cyan); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---- stage ---- */
+.stage { grid-area: stage; position: relative; min-height: 0; }
+.stage .readout {
+  position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%);
+  width: min(680px, 100%); text-align: center; pointer-events: none;
+}
+.phase {
+  display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; letter-spacing: .42em;
+  color: var(--cyan); text-shadow: 0 0 14px rgba(92,225,255,.6); padding-left: .42em;
+}
+.phase .tool { font: 11px var(--mono); letter-spacing: .12em; color: var(--amber); text-shadow: none; }
+#subtitle {
+  margin-top: 8px; min-height: 3.2em; font: 14px/1.6 var(--mono); color: #bfe6f5;
+  text-shadow: 0 0 8px rgba(0,0,0,.9); transition: opacity .8s;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* ---- console ---- */
+.console { grid-area: console; display: flex; flex-direction: column; gap: 8px; }
+.modes { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--line); }
+.seg button {
+  background: transparent; border: 0; padding: 5px 14px; font-size: 12px; font-weight: 700; letter-spacing: .24em; color: var(--muted);
+}
+.seg button.on { background: rgba(92,225,255,.12); color: var(--cyan); }
+.dispatch-opts { display: none; gap: 8px; flex-wrap: wrap; }
+.console.dispatch .dispatch-opts { display: flex; }
+.dispatch-opts select, .dispatch-opts input {
+  background: rgba(2,10,16,.75); border: 1px solid var(--line); padding: 5px 8px; font: 12px var(--mono); color: var(--text); min-width: 0;
+}
+.dispatch-opts select option { background: #04121c; }
+.hint { margin-left: auto; font: 10px var(--mono); color: var(--muted); letter-spacing: .06em; }
+.bar {
+  display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: var(--glass); border: 1px solid var(--line-2);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 0 30px rgba(92,225,255,.06), inset 0 0 20px rgba(92,225,255,.04);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+.bar:focus-within { border-color: var(--cyan-2); }
+#input {
+  flex: 1; resize: none; border: 0; outline: 0; background: transparent; padding: 7px 6px;
+  font: 14px/1.5 var(--mono); max-height: 140px; min-height: 36px;
+}
+#input::placeholder { color: #4d6b7e; }
+.bar .icon-btn { width: 38px; height: 38px; flex: none; }
+#mic.live { color: var(--red); border-color: var(--red); box-shadow: 0 0 16px rgba(255,77,109,.45); animation: pulse 1.4s infinite; }
+#send { color: var(--bg); background: var(--cyan); border-color: var(--cyan); }
+#send:hover { box-shadow: 0 0 16px rgba(92,225,255,.6); color: var(--bg); }
+
+/* ---- drawer ---- */
+.drawer {
+  position: fixed; z-index: 20; top: 14px; bottom: 16px; left: 16px; width: min(560px, calc(100vw - 32px));
+  transform: translateX(calc(-100% - 40px)); transition: transform .35s cubic-bezier(.2,.8,.2,1);
+  background: rgba(3, 12, 20, .92);
+}
+.drawer.open { transform: none; }
+.drawer .body { padding: 14px; display: flex; flex-direction: column; gap: 12px; min-height: 0; flex: 1; }
+.kv { display: grid; grid-template-columns: 90px 1fr; gap: 4px 12px; font: 12px var(--mono); }
+.kv span:nth-child(odd) { color: var(--muted); letter-spacing: .12em; }
+.block-label { font: 10px var(--mono); letter-spacing: .2em; color: var(--muted); }
+.prompt-box { font: 12px/1.5 var(--mono); padding: 9px; border: 1px solid var(--line); background: rgba(0,0,0,.25); white-space: pre-wrap; max-height: 120px; overflow: auto; }
+.output-box { flex: 1; min-height: 120px; margin: 0; font: 12px/1.5 var(--mono); padding: 10px; border: 1px solid var(--line); background: rgba(0,0,0,.4); white-space: pre-wrap; overflow: auto; color: #a9d2e3; }
+.drawer .actions { display: flex; gap: 8px; }
+.status-tag { font: 11px var(--mono); padding: 1px 7px; border: 1px solid currentColor; letter-spacing: .1em; text-transform: uppercase; }
+
+/* ---- toasts ---- */
+#toasts { position: fixed; z-index: 30; top: 76px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+.toast { font: 12px var(--mono); padding: 7px 14px; background: rgba(3,14,22,.92); border: 1px solid var(--cyan-2); color: var(--text); animation: rise .25s; }
+.toast.error { border-color: var(--red); color: #ffc2cd; }
+
+/* ---- narrow screens: stack ---- */
+@media (max-width: 1100px) {
+  body { overflow: auto; }
+  .app {
+    height: auto; min-height: 100%;
+    grid-template-columns: 1fr; grid-template-rows: auto 62vh auto auto auto;
+    grid-template-areas: 'top' 'stage' 'console' 'right' 'left';
+    padding: 10px 16px 16px;
+  }
+  #orb { position: absolute; height: 75vh; }
+  .left, .right { max-height: 420px; }
+  .stats { display: none; }
+  .hint { display: none; }
+}
+@media (max-width: 560px) {
+  .brand small { display: none; }
+  .brand b { font-size: 16px; letter-spacing: .2em; }
+  #clock { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot.running, #mic.live, .caret::after { animation: none; }
+}
+</style>
+</head>
+<body>
+<canvas id="orb" aria-hidden="true"></canvas>
+
+<div class="app">
+  <header>
+    <div class="brand">
+      <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
+        <circle cx="15" cy="15" r="13" fill="none" stroke="#5ce1ff" stroke-opacity=".35"/>
+        <circle cx="15" cy="15" r="9" fill="none" stroke="#5ce1ff" stroke-width="2" stroke-dasharray="14 5"/>
+        <circle cx="15" cy="15" r="3.5" fill="#5ce1ff"/>
+      </svg>
+      <div><b>ORCHESTRATOR</b><small>PARALLEL SESSION CONTROL</small></div>
+    </div>
+    <div class="stats">
+      <span class="stat run">ACTIVE<i id="sRun">0</i></span>
+      <span class="stat">QUEUED<i id="sQueue">0</i></span>
+      <span class="stat done">DONE<i id="sDone">0</i></span>
+      <span class="stat fail">FAILED<i id="sFail">0</i></span>
+      <span class="stat">LIMIT<i id="sLimit">-</i></span>
+    </div>
+    <div class="right-tools">
+      <div class="link" id="link"><span class="led"></span><span id="linkText">CONNECTING</span></div>
+      <span id="clock">--:--:--</span>
+      <button class="icon-btn" id="voice" title="Read replies aloud" aria-label="Read replies aloud">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <aside class="panel left">
+    <h2>OPERATIONS <span class="count" id="opCount"></span></h2>
+    <div class="scroll" id="tasks"></div>
+    <div class="panel-foot">
+      <button class="ghost" id="clearBtn">Clear finished</button>
+    </div>
+  </aside>
+
+  <section class="stage" id="stage">
+    <div class="readout">
+      <div class="phase"><span id="phaseLabel">STANDING BY</span><span class="tool" id="phaseTool"></span></div>
+      <div id="subtitle"></div>
+    </div>
+  </section>
+
+  <aside class="panel right">
+    <h2>COMMS <span class="count" id="msgCount"></span></h2>
+    <div class="scroll" id="comms"></div>
+  </aside>
+
+  <div class="console" id="console">
+    <div class="modes">
+      <div class="seg" role="tablist">
+        <button id="modeTalk" class="on" role="tab">TALK</button>
+        <button id="modeDispatch" role="tab">DISPATCH</button>
+      </div>
+      <div class="dispatch-opts">
+        <select id="dProject" aria-label="Project"></select>
+        <select id="dBackend" aria-label="Backend">
+          <option value="agent">agent</option>
+          <option value="process">process</option>
+        </select>
+        <input id="dModel" placeholder="model (optional)" size="14" aria-label="Model">
+      </div>
+      <span class="hint" id="hint">ENTER send · SHIFT+ENTER newline · / focus</span>
+    </div>
+    <div class="bar">
+      <textarea id="input" rows="1" placeholder="Speak or type to the orchestrator…"></textarea>
+      <button class="icon-btn" id="mic" title="Speak" aria-label="Speak">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+      </button>
+      <button class="icon-btn" id="send" title="Send" aria-label="Send">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<aside class="panel drawer" id="drawer" aria-hidden="true">
+  <h2><span id="dTitle">TASK</span><button class="icon-btn" id="dClose" style="margin-left:auto;width:26px;height:26px" aria-label="Close">✕</button></h2>
+  <div class="body">
+    <div class="kv" id="dKv"></div>
+    <div><div class="block-label">PROMPT</div><div class="prompt-box" id="dPrompt"></div></div>
+    <div class="block-label">OUTPUT</div>
+    <pre class="output-box" id="dOutput"></pre>
+    <div class="actions" id="dActions"></div>
+  </div>
+</aside>
+
+<div id="toasts"></div>
+
+<script>
+(() => {
+'use strict'
+
+// ======================================================================
+// State and transport
+// ======================================================================
+const TOKEN = new URLSearchParams(location.search).get('t') || ''
+const $ = id => document.getElementById(id)
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('orchhud.' + k); return v === null ? d : JSON.parse(v) } catch { return d } },
+  set(k, v) { try { localStorage.setItem('orchhud.' + k, JSON.stringify(v)) } catch {} },
+}
+
+const S = {
+  tasks: [], projects: [], maxParallel: 0, skew: 0,
+  phase: 'idle', tool: '', partial: '', partialAt: 0,
+  messages: [], pending: [],
+  selected: null, mode: store.get('mode', 'talk'),
+  voiceOn: store.get('voice', false), linked: false, listening: false,
+}
+
+const now = () => Date.now() + S.skew
+
+async function command(cmd) {
+  try {
+    const res = await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-orch-token': TOKEN },
+      body: JSON.stringify(cmd),
+    })
+    if (!res.ok) throw new Error('HTTP ' + res.status)
+    return true
+  } catch (e) {
+    toast('Link error: ' + e.message, 'error')
+    return false
+  }
+}
+
+function connect() {
+  const es = new EventSource('/api/events?t=' + encodeURIComponent(TOKEN))
+  es.onopen = () => setLinked(true)
+  es.onerror = () => setLinked(false)
+  es.onmessage = ev => {
+    let m
+    try { m = JSON.parse(ev.data) } catch { return }
+    handle(m)
+  }
+}
+
+function setLinked(on) {
+  S.linked = on
+  $('link').classList.toggle('on', on)
+  $('linkText').textContent = on ? 'LINKED' : 'LINK LOST'
+  renderPhase()
+}
+
+function handle(m) {
+  switch (m.type) {
+    case 'hello':
+      if (m.snapshot) applySnapshot(m.snapshot, true)
+      S.messages = m.messages || []
+      S.partial = m.partial || ''
+      setPhase(m.phase?.phase || 'idle', m.phase?.tool)
+      renderComms(); renderSubtitle()
+      break
+    case 'snapshot': applySnapshot(m, false); break
+    case 'phase':
+      setPhase(m.phase, m.tool)
+      if (m.phase === 'thinking') { S.partial = ''; renderComms(); renderSubtitle() }
+      break
+    case 'delta':
+      S.partial += m.text
+      S.partialAt = performance.now()
+      Orb.voice(Math.min(1, .35 + m.text.length / 60))
+      renderStreaming(); renderSubtitle()
+      break
+    case 'msg': onMessage(m); break
+    case 'toast': toast(m.text, m.level); break
+  }
+}
+
+// ======================================================================
+// Snapshot: tasks and projects
+// ======================================================================
+function applySnapshot(snap, isFirst) {
+  S.skew = (snap.now || Date.now()) - Date.now()
+  const before = new Map(S.tasks.map(t => [t.id, t.status]))
+  S.tasks = snap.tasks || []
+  S.projects = snap.projects || []
+  S.maxParallel = snap.maxParallel || 0
+  if (!isFirst) {
+    for (const t of S.tasks) {
+      const was = before.get(t.id)
+      if (was === t.status) continue
+      if (t.status === 'running') Orb.launch(t.id)
+      else if (t.status === 'done' || t.status === 'failed') Orb.finish(t.id, t.status)
+      else if (!was && t.status === 'queued') Orb.ripple()
+    }
+  }
+  renderTasks(); renderStats(); renderProjects(); renderDrawer()
+}
+
+const ORDER = { running: 0, queued: 1, failed: 2, done: 3, killed: 4 }
+function fmtDur(ms) {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return s + 's'
+  const m = Math.floor(s / 60)
+  return m < 60 ? m + 'm' + String(s % 60).padStart(2, '0') + 's' : Math.floor(m / 60) + 'h' + (m % 60) + 'm'
+}
+const elapsed = t => t.startedAt ? fmtDur((t.endedAt || now()) - t.startedAt) : 'waiting'
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+function sortedTasks() {
+  return [...S.tasks].sort((a, b) => (ORDER[a.status] - ORDER[b.status]) || ((b.startedAt || b.createdAt) - (a.startedAt || a.createdAt)))
+}
+
+function renderTasks() {
+  const list = sortedTasks()
+  $('opCount').textContent = list.length ? list.length + ' TOTAL' : ''
+  if (!list.length) {
+    $('tasks').innerHTML = '<div class="empty">No operations yet.<br><br>Talk to the orchestrator and ask it to run something, or switch to DISPATCH to queue a task directly.</div>'
+    return
+  }
+  $('tasks').innerHTML = list.map(t => `
+    <button class="task ${t.id === S.selected ? 'sel' : ''}" data-id="${esc(t.id)}">
+      <span class="dot ${t.status}"></span>
+      <span class="t">${esc(t.title)}</span>
+      <span class="el" data-el="${esc(t.id)}">${elapsed(t)}</span>
+      <span class="m">${esc(t.project)} · ${esc(t.backend)}${t.model ? ' · ' + esc(t.model) : ''} · ${t.status}</span>
+    </button>`).join('')
+}
+
+function tickElapsed() {
+  for (const el of document.querySelectorAll('[data-el]')) {
+    const t = S.tasks.find(x => x.id === el.dataset.el)
+    if (t && t.status === 'running') el.textContent = elapsed(t)
+  }
+  const d = new Date()
+  $('clock').textContent = d.toTimeString().slice(0, 8)
+}
+
+function renderStats() {
+  const c = s => S.tasks.filter(t => t.status === s).length
+  $('sRun').textContent = c('running')
+  $('sQueue').textContent = c('queued')
+  $('sDone').textContent = c('done')
+  $('sFail').textContent = c('failed')
+  $('sLimit').textContent = S.maxParallel || '-'
+  renderPhase()
+}
+
+function renderProjects() {
+  const sel = $('dProject')
+  const want = sel.value || store.get('project', '')
+  const opts = S.projects.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')
+  const key = S.projects.map(p => p.id + p.name).join('|')
+  if (sel.dataset.key !== key) {
+    sel.innerHTML = opts || '<option value="">no projects</option>'
+    sel.dataset.key = key
+    if (S.projects.some(p => p.id === want)) sel.value = want
+  }
+}
+
+// ---- drawer ------------------------------------------------------------
+function select(id) {
+  S.selected = id
+  renderTasks(); renderDrawer()
+}
+
+const STATUS_COLOR = { running: 'var(--amber)', queued: 'var(--slate)', done: 'var(--green)', failed: 'var(--red)', killed: 'var(--muted)' }
+
+function renderDrawer() {
+  const t = S.tasks.find(x => x.id === S.selected)
+  const d = $('drawer')
+  d.classList.toggle('open', !!t)
+  d.setAttribute('aria-hidden', t ? 'false' : 'true')
+  if (!t) return
+  $('dTitle').textContent = t.title.toUpperCase()
+  $('dKv').innerHTML = `
+    <span>STATUS</span><span><span class="status-tag" style="color:${STATUS_COLOR[t.status]}">${t.status}</span></span>
+    <span>ID</span><span>${esc(t.id)}</span>
+    <span>PROJECT</span><span>${esc(t.project)}</span>
+    <span>BACKEND</span><span>${esc(t.backend)}${t.model ? ' · ' + esc(t.model) : ''}</span>
+    <span>ELAPSED</span><span>${elapsed(t)}</span>`
+  $('dPrompt').textContent = t.prompt
+  const out = $('dOutput')
+  const atEnd = out.scrollHeight - out.scrollTop - out.clientHeight < 30
+  out.textContent = t.output || '(no output yet)'
+  if (atEnd) out.scrollTop = out.scrollHeight
+  const live = t.status === 'running' || t.status === 'queued'
+  $('dActions').innerHTML =
+    (live ? '<button class="ghost warn" data-act="kill">Kill</button>' : '<button class="ghost" data-act="retry">Retry</button>') +
+    (t.status !== 'running' ? '<button class="ghost warn" data-act="remove">Remove</button>' : '')
+}
+
+// ======================================================================
+// Conversation
+// ======================================================================
+function onMessage(m) {
+  S.messages.push(m)
+  if (S.messages.length > 150) S.messages.shift()
+  if (m.role === 'user' && m.source === 'hud') {
+    const i = S.pending.indexOf(m.text)
+    if (i !== -1) S.pending.splice(i, 1)
+  }
+  if (m.role === 'assistant') {
+    S.partial = ''
+    Voice.say(m.text)
+  }
+  if (m.role === 'system' && m.status) {
+    if (m.status === 'done' || m.status === 'failed') Voice.say(m.text, true)
+  }
+  renderComms(); renderSubtitle()
+}
+
+function md(text) {
+  const parts = String(text).split(/```[\w-]*\n?/)
+  return parts.map((part, i) => {
+    if (i % 2) return '<pre><code>' + esc(part.replace(/\n$/, '')) + '</code></pre>'
+    return esc(part)
+      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/^#{1,6} (.*)$/gm, '<strong>$1</strong>')
+      .replace(/^\s*[-*] /gm, '• ')
+      .replace(/\n/g, '<br>')
+  }).join('')
+}
+const hhmm = at => at ? new Date(at - S.skew).toTimeString().slice(0, 5) : ''
+
+function msgHtml(m, extra = '') {
+  const who = m.role === 'assistant' ? 'ORCHESTRATOR' : m.role === 'user' ? (m.source === 'hud' ? 'YOU · HUD' : 'YOU · TERMINAL') : 'SYSTEM'
+  if (m.role === 'system') {
+    return `<div class="msg system ${esc(m.status || '')}"><div class="body">◆ ${esc(m.text)}</div></div>`
+  }
+  return `<div class="msg ${m.role} ${extra}"><div class="who"><span>${who}</span><time>${hhmm(m.at)}</time></div><div class="body">${md(m.text)}</div></div>`
+}
+
+function renderComms() {
+  const el = $('comms')
+  const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  let html = S.messages.map(m => msgHtml(m)).join('')
+  html += S.pending.map(text => msgHtml({ role: 'user', source: 'hud', text }, 'pending')).join('')
+  if (S.partial) html += `<div class="msg assistant" id="streaming"><div class="who"><span>ORCHESTRATOR</span></div><div class="body caret">${md(S.partial)}</div></div>`
+  if (!html) html = '<div class="empty">Say hello.<br><br>Messages here go to your Claude Code session, which can dispatch work across your projects. Replies stream back here.</div>'
+  el.innerHTML = html
+  $('msgCount').textContent = S.messages.length ? S.messages.length + ' MSG' : ''
+  if (atEnd) el.scrollTop = el.scrollHeight
+}
+
+function renderStreaming() {
+  const el = $('streaming')
+  if (!el) return renderComms()
+  const box = $('comms')
+  const atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 60
+  el.querySelector('.body').innerHTML = md(S.partial)
+  if (atEnd) box.scrollTop = box.scrollHeight
+}
+
+const plain = s => String(s)
+  .replace(/```[\s\S]*?```/g, ' ')
+  .replace(/[`*_#>]/g, '')
+  .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+  .replace(/\s+/g, ' ').trim()
+
+function renderSubtitle() {
+  const el = $('subtitle')
+  const text = plain(S.partial)
+  el.textContent = text.length > 260 ? '…' + text.slice(-260) : text
+  el.style.opacity = text ? 1 : 0
+}
+
+// ---- phase ------------------------------------------------------------
+function setPhase(p, tool) {
+  S.phase = p
+  S.tool = tool || ''
+  Orb.phase(p)
+  renderPhase()
+}
+
+function prettyTool(name) {
+  if (!name) return ''
+  const m = name.match(/^mcp__(.+?)__(.+)$/)
+  return (m ? m[2] : name).replace(/_/g, ' ').toUpperCase()
+}
+
+function renderPhase() {
+  const running = S.tasks.filter(t => t.status === 'running').length
+  let label
+  if (!S.linked) label = 'OFFLINE'
+  else if (S.listening) label = 'LISTENING'
+  else if (S.phase === 'thinking') label = 'PROCESSING'
+  else if (S.phase === 'speaking') label = 'TRANSMITTING'
+  else if (S.phase === 'tool') label = 'EXECUTING'
+  else label = running ? `MONITORING ${running} OPERATION${running === 1 ? '' : 'S'}` : 'STANDING BY'
+  $('phaseLabel').textContent = label
+  $('phaseTool').textContent = S.phase === 'tool' && !S.listening ? prettyTool(S.tool) : ''
+}
+
+// ======================================================================
+// Input console
+// ======================================================================
+const input = $('input')
+
+function setMode(mode) {
+  S.mode = mode
+  store.set('mode', mode)
+  $('modeTalk').classList.toggle('on', mode === 'talk')
+  $('modeDispatch').classList.toggle('on', mode === 'dispatch')
+  $('console').classList.toggle('dispatch', mode === 'dispatch')
+  input.placeholder = mode === 'talk'
+    ? 'Speak or type to the orchestrator…'
+    : 'Describe the task to run in the selected project…'
+}
+
+async function send() {
+  const text = input.value.trim()
+  if (!text) return
+  if (S.mode === 'talk') {
+    if (await command({ type: 'chat', text })) {
+      S.pending.push(text)
+      renderComms()
+      Orb.ripple()
+      input.value = ''
+    }
+  } else {
+    const projectId = $('dProject').value
+    if (!projectId) return toast('Register a project first (Projects tab in /orchestrator).', 'error')
+    store.set('project', projectId)
+    if (await command({ type: 'dispatch', projectId, title: '', prompt: text, backend: $('dBackend').value, model: $('dModel').value.trim() })) {
+      input.value = ''
+      Orb.ripple()
+    }
+  }
+  autosize()
+}
+
+function autosize() {
+  input.style.height = 'auto'
+  input.style.height = Math.min(140, input.scrollHeight) + 'px'
+}
+
+function toast(text, level) {
+  const el = document.createElement('div')
+  el.className = 'toast' + (level === 'error' ? ' error' : '')
+  el.textContent = text
+  $('toasts').appendChild(el)
+  setTimeout(() => el.remove(), 3600)
+}
+
+// ======================================================================
+// Voice: speech out (replies) and speech in (the mic)
+// ======================================================================
+const Voice = (() => {
+  const synth = window.speechSynthesis
+  let voice = null
+  let speaking = false
+  const pick = () => {
+    if (!synth) return
+    const vs = synth.getVoices()
+    voice =
+      vs.find(v => /(Ryan|George|Daniel|Thomas|Google UK English Male)/i.test(v.name) && /^en/i.test(v.lang)) ||
+      vs.find(v => /^en-GB/i.test(v.lang)) ||
+      vs.find(v => /^en/i.test(v.lang)) || null
+  }
+  if (synth) { pick(); synth.onvoiceschanged = pick }
+
+  function say(text, isShort) {
+    if (!S.voiceOn || !synth) return
+    let t = plain(text)
+    if (!t) return
+    if (!isShort) {
+      const sentences = t.match(/[^.!?]+[.!?]+/g) || [t]
+      t = sentences.slice(0, 4).join(' ')
+      if (t.length > 600) t = t.slice(0, 600)
+    }
+    const u = new SpeechSynthesisUtterance(t)
+    if (voice) u.voice = voice
+    u.rate = 1.04; u.pitch = .92
+    u.onstart = () => { speaking = true }
+    u.onend = u.onerror = () => { speaking = false }
+    u.onboundary = () => Orb.voice(1)
+    synth.speak(u)
+  }
+  const isSpeaking = () => speaking
+  const stop = () => { if (synth) synth.cancel(); speaking = false }
+
+  // Speech in.
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition
+  let rec = null
+  function listen() {
+    if (!Rec) return toast('Voice input needs Chrome or Edge.', 'error')
+    if (rec) { rec.stop(); return }
+    stop()
+    rec = new Rec()
+    rec.lang = navigator.language || 'en-US'
+    rec.interimResults = true
+    rec.continuous = false
+    let finalText = ''
+    rec.onstart = () => { S.listening = true; $('mic').classList.add('live'); Orb.phase('listening'); renderPhase() }
+    rec.onresult = e => {
+      let interim = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i]
+        if (r.isFinal) finalText += r[0].transcript
+        else interim += r[0].transcript
+        Orb.voice(.6)
+      }
+      input.value = (finalText + interim).trim()
+      autosize()
+    }
+    rec.onerror = e => { if (e.error !== 'no-speech' && e.error !== 'aborted') toast('Mic: ' + e.error, 'error') }
+    rec.onend = () => {
+      rec = null
+      S.listening = false
+      $('mic').classList.remove('live')
+      Orb.phase(S.phase)
+      renderPhase()
+      if (finalText.trim()) send()
+    }
+    rec.start()
+  }
+  if (!Rec) $('mic').style.display = 'none'
+  return { say, stop, listen, isSpeaking }
+})()
+
+// ======================================================================
+// The orb
+// ======================================================================
+const Orb = (() => {
+  const cv = $('orb')
+  const ctx = cv.getContext('2d')
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
+  let W = 0, H = 0, DPR = 1, cx = 0, cy = 0, R = 150, stL = 0, stR = 0
+  let pts = [], stars = []
+  let t = 0, last = performance.now()
+  let rotY = 0
+  let energy = .15, energyTarget = .15
+  let voiceLevel = 0
+  let mode = 'idle'
+  const col = [92, 225, 255]
+  let flash = null // { rgb, until }
+  const ripples = []
+  const beams = []   // { id, born }
+  const bursts = []  // particles
+  let moons = []     // drawn positions, for hit tests
+  let hover = null
+
+  const PHASE = {
+    idle:      { rgb: [92, 225, 255],  energy: .16 },
+    thinking:  { rgb: [125, 150, 255], energy: .5 },
+    speaking:  { rgb: [150, 238, 255], energy: .45 },
+    tool:      { rgb: [255, 181, 71],  energy: .65 },
+    listening: { rgb: [110, 255, 205], energy: .4 },
+    offline:   { rgb: [110, 125, 140], energy: .05 },
+  }
+  const STATUS_RGB = { running: [255, 181, 71], queued: [113, 133, 155], done: [61, 245, 160], failed: [255, 77, 109], killed: [80, 92, 105] }
+
+  function build() {
+    const n = W < 700 ? 750 : 1500
+    const g = Math.PI * (3 - Math.sqrt(5))
+    pts = []
+    for (let i = 0; i < n; i++) {
+      const y = 1 - (i / (n - 1)) * 2
+      const r = Math.sqrt(1 - y * y)
+      const th = g * i
+      pts.push({ x: Math.cos(th) * r, y, z: Math.sin(th) * r, s: Math.random() * 6.28 })
+    }
+    stars = []
+    for (let i = 0; i < (W < 700 ? 70 : 170); i++) {
+      stars.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.2 + .2, p: Math.random() * 6.28, v: Math.random() * .08 + .02 })
+    }
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2)
+    const rect = cv.getBoundingClientRect()
+    W = rect.width; H = rect.height
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR)
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
+    place()
+    build()
+  }
+
+  function place() {
+    const st = $('stage').getBoundingClientRect()
+    const cr = cv.getBoundingClientRect()
+    cx = st.left - cr.left + st.width / 2
+    cy = st.top - cr.top + st.height * .44
+    stL = st.left - cr.left; stR = stL + st.width
+    // The outer orbit (1.9R) and its labels stay inside the stage column.
+    R = Math.max(60, Math.min(250, st.height * .24, (st.width / 2 - 70) / 1.95))
+  }
+
+  // Camera: tilt around X after the object's own rotation.
+  function camera(x, y, z, tilt) {
+    const ct = Math.cos(tilt), st = Math.sin(tilt)
+    const y2 = y * ct - z * st
+    const z2 = y * st + z * ct
+    const f = 3.4 / (3.4 - z2)
+    return { x: cx + x * R * f, y: cy + y2 * R * f, z: z2, f }
+  }
+
+  function mix(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k] }
+  const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`
+
+  // A point on a tilted orbit of radius r (sphere units).
+  function orbitPoint(theta, r, incl, node) {
+    let x = Math.cos(theta) * r, y = 0, z = Math.sin(theta) * r
+    // incline around X
+    const ci = Math.cos(incl), si = Math.sin(incl)
+    ;[y, z] = [y * ci - z * si, y * si + z * ci]
+    // turn around Y
+    const cn = Math.cos(node), sn = Math.sin(node)
+    ;[x, z] = [x * cn + z * sn, -x * sn + z * cn]
+    return [x, y, z]
+  }
+
+  function frame(nowMs) {
+    const dt = Math.min(.05, (nowMs - last) / 1000)
+    last = nowMs
+    t += dt * (reduce ? .35 : 1)
+
+    const ph = PHASE[S.linked ? mode : 'offline'] || PHASE.idle
+    const running = S.tasks.filter(x => x.status === 'running').length
+    energyTarget = ph.energy + Math.min(.25, running * .05) + (Voice.isSpeaking() ? .2 : 0)
+    energy += (energyTarget - energy) * Math.min(1, dt * 2.5)
+    if (Voice.isSpeaking()) voiceLevel = Math.max(voiceLevel, .35 + .25 * Math.sin(t * 17) * Math.sin(t * 7.3))
+    voiceLevel *= Math.exp(-dt * 4.5)
+    let target = ph.rgb
+    if (flash && nowMs < flash.until) target = mix(target, flash.rgb, .75)
+    const c = mix(col, target, Math.min(1, dt * 3))
+    col[0] = c[0]; col[1] = c[1]; col[2] = c[2]
+    rotY += dt * (.1 + energy * .45)
+    const tilt = .38 + Math.sin(t * .13) * .07
+
+    ctx.clearRect(0, 0, W, H)
+
+    // stars
+    ctx.globalCompositeOperation = 'source-over'
+    for (const s of stars) {
+      s.x -= s.v; if (s.x < 0) s.x += W
+      const a = .25 + .25 * Math.sin(t * 1.3 + s.p)
+      ctx.fillStyle = `rgba(160,210,235,${a})`
+      ctx.fillRect(s.x, s.y, s.r, s.r)
+    }
+
+    ctx.globalCompositeOperation = 'lighter'
+
+    // outer halo
+    const halo = ctx.createRadialGradient(cx, cy, R * .2, cx, cy, R * 2.1)
+    halo.addColorStop(0, rgba(col, .16 + energy * .12 + voiceLevel * .1))
+    halo.addColorStop(.45, rgba(col, .05))
+    halo.addColorStop(1, rgba(col, 0))
+    ctx.fillStyle = halo
+    ctx.fillRect(cx - R * 2.2, cy - R * 2.2, R * 4.4, R * 4.4)
+
+    // ---- task orbits and moons (computed first, drawn around the sphere) ----
+    const runningTasks = S.tasks.filter(x => x.status === 'running')
+    const queuedTasks = S.tasks.filter(x => x.status === 'queued')
+    const ORBITS = [
+      { list: runningTasks, r: 1.5, incl: 1.18, node: .5, speed: .32, alpha: .5 },
+      { list: queuedTasks, r: 1.88, incl: 1.36, node: -.7, speed: .11, alpha: .28 },
+    ]
+    const newMoons = []
+    for (const o of ORBITS) {
+      // the orbit ring
+      ctx.lineWidth = 1
+      for (let i = 0; i < 120; i++) {
+        const a0 = (i / 120) * 6.283, a1 = ((i + 1) / 120) * 6.283
+        const p0 = orbitPoint(a0, o.r, o.incl, o.node), p1 = orbitPoint(a1, o.r, o.incl, o.node)
+        const s0 = camera(...p0, tilt), s1 = camera(...p1, tilt)
+        const dep = (s0.z + 1.9) / 3.8
+        ctx.strokeStyle = rgba(col, (o.list.length ? o.alpha : o.alpha * .35) * (.15 + .85 * dep) * .55)
+        ctx.beginPath(); ctx.moveTo(s0.x, s0.y); ctx.lineTo(s1.x, s1.y); ctx.stroke()
+      }
+      o.list.forEach((task, i) => {
+        const theta = (i / o.list.length) * 6.283 + t * o.speed
+        const p = orbitPoint(theta, o.r, o.incl, o.node)
+        const s = camera(...p, tilt)
+        const behind = s.z < 0 && Math.hypot(s.x - cx, s.y - cy) < R * 1.05
+        newMoons.push({ id: task.id, task, x: s.x, y: s.y, z: s.z, behind })
+      })
+    }
+    moons = newMoons
+
+    const drawMoon = m => {
+      const rgb = STATUS_RGB[m.task.status] || STATUS_RGB.queued
+      const a = m.behind ? .3 : 1
+      const pulse = m.task.status === 'running' ? 1 + .25 * Math.sin(t * 4 + m.x * .01) : 1
+      const rad = (m.id === hover ? 16 : 11) * pulse
+      const g = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, rad * 1.8)
+      g.addColorStop(0, rgba(rgb, .95 * a))
+      g.addColorStop(.25, rgba(rgb, .45 * a))
+      g.addColorStop(1, rgba(rgb, 0))
+      ctx.fillStyle = g
+      ctx.beginPath(); ctx.arc(m.x, m.y, rad * 1.8, 0, 6.283); ctx.fill()
+      ctx.fillStyle = rgba([255, 255, 255], .9 * a)
+      ctx.beginPath(); ctx.arc(m.x, m.y, 2.2, 0, 6.283); ctx.fill()
+    }
+    const labelMoon = m => {
+      if (m.behind) return
+      const title = m.task.title.length > 26 ? m.task.title.slice(0, 25) + '…' : m.task.title
+      ctx.font = '600 13px Rajdhani, Bahnschrift, sans-serif'
+      const w = Math.max(ctx.measureText(title.toUpperCase()).width, 90) + 36
+      // Label on the outer side, unless that would leave the stage column.
+      let right = m.x >= cx
+      if (right && m.x + w > stR) right = false
+      else if (!right && m.x - w < stL) right = true
+      const lx = m.x + (right ? 22 : -22), ly = m.y - 14
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = rgba(col, .45)
+      ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(m.x + (right ? 5 : -5), m.y - 4); ctx.lineTo(lx, ly); ctx.lineTo(lx + (right ? 8 : -8), ly); ctx.stroke()
+      ctx.textAlign = right ? 'left' : 'right'
+      ctx.font = '600 13px Rajdhani, Bahnschrift, sans-serif'
+      ctx.fillStyle = 'rgba(225,245,255,.92)'
+      ctx.fillText(title.toUpperCase(), lx + (right ? 11 : -11), ly + 4)
+      ctx.font = '10px "JetBrains Mono", Consolas, monospace'
+      ctx.fillStyle = rgba(STATUS_RGB[m.task.status] || col, .9)
+      ctx.fillText(`${m.task.project} · ${elapsed(m.task)}`, lx + (right ? 11 : -11), ly + 17)
+      ctx.globalCompositeOperation = 'lighter'
+    }
+
+    for (const m of moons) if (m.behind) drawMoon(m)
+
+    // ---- the sphere ----
+    const cy0 = Math.cos(rotY), sy0 = Math.sin(rotY)
+    const amp = reduce ? .01 : .012 + energy * .03 + voiceLevel * .13
+    const band = Math.sin(t * 1.3) * 1.05
+    for (const p of pts) {
+      // spin
+      let x = p.x * cy0 + p.z * sy0
+      let z = -p.x * sy0 + p.z * cy0
+      let y = p.y
+      // surface ripple
+      const n = Math.sin(p.x * 4.2 + t * 2.1 + p.s * .3) * Math.cos(p.y * 5.1 - t * 1.7) + Math.sin(p.z * 6 + t * 3.1) * .5
+      const d = 1 + amp * n
+      x *= d; y *= d; z *= d
+      const s = camera(x, y, z, tilt)
+      const dep = (s.z + 1) / 2
+      let a = .1 + .8 * dep * dep
+      if (mode === 'thinking' || mode === 'tool') a += Math.exp(-((p.y - band) ** 2) * 30) * .7
+      a *= .75 + .25 * Math.sin(t * 2 + p.s)
+      const size = (.7 + dep * 1.5) * (1 + voiceLevel * .5)
+      ctx.fillStyle = rgba(col, Math.min(1, a))
+      ctx.fillRect(s.x - size / 2, s.y - size / 2, size, size)
+    }
+
+    // wire rings on the sphere: equator and two meridians
+    ctx.lineWidth = 1
+    const rings = [
+      i => [Math.cos(i), 0, Math.sin(i)],
+      i => [Math.cos(i) * cy0, Math.sin(i), -Math.cos(i) * sy0],
+      i => [Math.cos(i) * Math.cos(rotY + 1.57), Math.sin(i), -Math.cos(i) * Math.sin(rotY + 1.57)],
+    ]
+    for (const ring of rings) {
+      let prev = null
+      for (let i = 0; i <= 96; i++) {
+        const [x, y, z] = ring((i / 96) * 6.283)
+        const s = camera(x * 1.003, y * 1.003, z * 1.003, tilt)
+        if (prev) {
+          ctx.strokeStyle = rgba(col, .03 + .16 * ((s.z + 1) / 2) ** 2)
+          ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke()
+        }
+        prev = s
+      }
+    }
+
+    // core
+    const pulse = 1 + Math.sin(t * (1.5 + energy * 4)) * .06 + voiceLevel * .25
+    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * .62 * pulse)
+    core.addColorStop(0, rgba([255, 255, 255], .55 + voiceLevel * .3))
+    core.addColorStop(.12, rgba(col, .5 + energy * .3))
+    core.addColorStop(.45, rgba(col, .12))
+    core.addColorStop(1, rgba(col, 0))
+    ctx.fillStyle = core
+    ctx.beginPath(); ctx.arc(cx, cy, R * .62 * pulse, 0, 6.283); ctx.fill()
+
+    // ripples (sent messages, new tasks, tool calls)
+    for (let i = ripples.length - 1; i >= 0; i--) {
+      const r = ripples[i]
+      const k = (nowMs - r.born) / 1600
+      if (k >= 1) { ripples.splice(i, 1); continue }
+      ctx.strokeStyle = rgba(r.rgb || col, (1 - k) * .6)
+      ctx.lineWidth = 2 * (1 - k) + .5
+      ctx.beginPath(); ctx.arc(cx, cy, R * (1 + k * 1.3), 0, 6.283); ctx.stroke()
+    }
+
+    // beams from the core to newly launched tasks
+    for (let i = beams.length - 1; i >= 0; i--) {
+      const b = beams[i]
+      const k = (nowMs - b.born) / 1300
+      const m = moons.find(x => x.id === b.id)
+      if (k >= 1 || !m) { if (k >= 1) beams.splice(i, 1); continue }
+      const g = ctx.createLinearGradient(cx, cy, m.x, m.y)
+      g.addColorStop(0, rgba([255, 255, 255], 0))
+      g.addColorStop(.6, rgba(STATUS_RGB.running, (1 - k) * .8))
+      g.addColorStop(1, rgba([255, 255, 255], (1 - k)))
+      ctx.strokeStyle = g
+      ctx.lineWidth = 2.5 * (1 - k) + .5
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(m.x, m.y); ctx.stroke()
+    }
+
+    for (const m of moons) if (!m.behind) drawMoon(m)
+
+    // bursts from finished tasks
+    for (let i = bursts.length - 1; i >= 0; i--) {
+      const p = bursts[i]
+      p.life -= dt
+      if (p.life <= 0) { bursts.splice(i, 1); continue }
+      p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .97; p.vy *= .97
+      ctx.fillStyle = rgba(p.rgb, p.life / p.max)
+      ctx.fillRect(p.x - 1.2, p.y - 1.2, 2.4, 2.4)
+    }
+
+    drawHud(nowMs, running)
+    for (const m of moons) labelMoon(m)
+
+    ctx.globalCompositeOperation = 'source-over'
+    requestAnimationFrame(frame)
+  }
+
+  // The flat instrument rings around the sphere.
+  function drawHud(nowMs, running) {
+    const a0 = t * .25
+    ctx.lineWidth = 1
+    // thin ring
+    ctx.strokeStyle = rgba(col, .22)
+    ctx.beginPath(); ctx.arc(cx, cy, R * 1.3, 0, 6.283); ctx.stroke()
+    // segmented arcs
+    ctx.lineWidth = 2.5
+    ctx.strokeStyle = rgba(col, .55)
+    for (let i = 0; i < 3; i++) {
+      const s = a0 + i * 2.094
+      ctx.beginPath(); ctx.arc(cx, cy, R * 1.38, s, s + .9 + .3 * Math.sin(t * .7 + i)); ctx.stroke()
+    }
+    // ticks
+    ctx.lineWidth = 1
+    const tr = R * 1.5, rot = -t * .05
+    for (let i = 0; i < 90; i++) {
+      const a = rot + (i / 90) * 6.283
+      const long = i % 6 === 0
+      const lit = (i / 90) < Math.min(1, S.maxParallel ? running / S.maxParallel : 0)
+      ctx.strokeStyle = lit ? rgba([255, 181, 71], .75) : rgba(col, long ? .45 : .18)
+      const r1 = tr, r2 = tr + (long ? 9 : 4)
+      ctx.beginPath()
+      ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1)
+      ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2)
+      ctx.stroke()
+    }
+    // outer dashed ring with brackets
+    const orr = R * 1.68, b = -t * .12
+    ctx.setLineDash([2, 7])
+    ctx.strokeStyle = rgba(col, .3)
+    ctx.beginPath(); ctx.arc(cx, cy, orr, 0, 6.283); ctx.stroke()
+    ctx.setLineDash([])
+    ctx.lineWidth = 2
+    ctx.strokeStyle = rgba(col, .7)
+    for (const s of [b, b + 3.1416]) {
+      ctx.beginPath(); ctx.arc(cx, cy, orr, s - .18, s + .18); ctx.stroke()
+    }
+    // scanner sweep
+    const sw = t * (.6 + energy * 1.2)
+    for (let i = 0; i < 14; i++) {
+      ctx.strokeStyle = rgba(col, .4 * (1 - i / 14))
+      ctx.lineWidth = 3
+      ctx.beginPath(); ctx.arc(cx, cy, R * 1.22, sw - i * .04 - .04, sw - i * .04); ctx.stroke()
+    }
+    // readouts
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.font = '10px "JetBrains Mono", Consolas, monospace'
+    ctx.fillStyle = rgba(col, .75)
+    const txt = (s, ang, r, align) => {
+      ctx.textAlign = align
+      ctx.fillText(s, cx + Math.cos(ang) * r, cy + Math.sin(ang) * r)
+    }
+    const queued = S.tasks.filter(x => x.status === 'queued').length
+    txt(`AGENTS ${String(running).padStart(2, '0')}/${String(S.maxParallel || 0).padStart(2, '0')}`, -.62, R * 1.82, 'left')
+    txt(`QUEUE ${String(queued).padStart(2, '0')}`, -.5, R * 1.86, 'left')
+    txt('SYS.ORCH // CORE', -2.52, R * 1.82, 'right')
+    txt(`E ${(energy * 100).toFixed(0).padStart(3, '0')}%`, -2.64, R * 1.86, 'right')
+    ctx.globalCompositeOperation = 'lighter'
+  }
+
+  // input
+  const stage = $('stage')
+  const hit = (ex, ey) => {
+    const r = cv.getBoundingClientRect()
+    const x = ex - r.left, y = ey - r.top
+    let best = null, bd = 18
+    for (const m of moons) {
+      const d = Math.hypot(m.x - x, m.y - y)
+      if (d < bd) { bd = d; best = m }
+    }
+    return best
+  }
+  stage.addEventListener('mousemove', e => {
+    const m = hit(e.clientX, e.clientY)
+    hover = m ? m.id : null
+    stage.style.cursor = m ? 'pointer' : ''
+  })
+  stage.addEventListener('click', e => {
+    const m = hit(e.clientX, e.clientY)
+    if (m) select(m.id)
+  })
+  addEventListener('resize', resize)
+  new ResizeObserver(place).observe(stage)
+
+  resize()
+  requestAnimationFrame(frame)
+
+  return {
+    phase(p) { mode = p; if (p === 'tool') ripples.push({ born: performance.now(), rgb: [255, 181, 71] }) },
+    voice(v) { voiceLevel = Math.max(voiceLevel, v) },
+    ripple() { ripples.push({ born: performance.now() }) },
+    launch(id) { beams.push({ id, born: performance.now() }); ripples.push({ born: performance.now(), rgb: [255, 181, 71] }) },
+    finish(id, status) {
+      const m = moons.find(x => x.id === id)
+      const rgb = STATUS_RGB[status]
+      flash = { rgb, until: performance.now() + 900 }
+      const ox = m ? m.x : cx, oy = m ? m.y : cy
+      for (let i = 0; i < 40; i++) {
+        const a = Math.random() * 6.283, v = 40 + Math.random() * 140
+        bursts.push({ x: ox, y: oy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1.2, max: 1.2, rgb })
+      }
+      ripples.push({ born: performance.now(), rgb })
+    },
+  }
+})()
+
+// ======================================================================
+// Wiring
+// ======================================================================
+$('tasks').addEventListener('click', e => {
+  const b = e.target.closest('.task')
+  if (b) select(b.dataset.id === S.selected ? null : b.dataset.id)
+})
+$('dClose').onclick = () => select(null)
+$('dActions').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]')
+  if (!b || !S.selected) return
+  const act = b.dataset.act
+  command({ type: act, id: S.selected })
+  if (act === 'remove') select(null)
+})
+$('clearBtn').onclick = () => command({ type: 'clear' })
+$('modeTalk').onclick = () => setMode('talk')
+$('modeDispatch').onclick = () => setMode('dispatch')
+$('send').onclick = send
+$('mic').onclick = () => Voice.listen()
+$('voice').onclick = () => {
+  S.voiceOn = !S.voiceOn
+  store.set('voice', S.voiceOn)
+  $('voice').classList.toggle('on', S.voiceOn)
+  if (!S.voiceOn) Voice.stop()
+  else toast('Replies will be read aloud.')
+}
+$('voice').classList.toggle('on', S.voiceOn)
+input.addEventListener('input', autosize)
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() }
+})
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (S.selected) select(null); Voice.stop() }
+  if (e.key === '/' && document.activeElement !== input && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) {
+    e.preventDefault(); input.focus()
+  }
+})
+
+setMode(S.mode)
+setLinked(false)
+renderTasks(); renderComms(); renderStats()
+setInterval(tickElapsed, 1000)
+tickElapsed()
+connect()
+})()
+</script>
+</body>
+</html>

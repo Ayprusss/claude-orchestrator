@@ -30,6 +30,10 @@ Run `/orchestrator` to open the pane.
 - **Settings**: max parallel sessions, the `claude` binary, and flags for headless runs.
 - **Docs**: the full guide.
 
+### HUD
+
+Run `/orchestrator-hud` (or press **HUD** in the pane) to open a browser dashboard: an animated orb you can talk to, by text or voice, with running tasks orbiting it, a live task list, and the main conversation streamed in. It needs Node.js 18+ on PATH. It runs on `127.0.0.1` only, and each request needs a per-install token. `/orchestrator-hud stop` shuts it down. The **HUD** page of the Docs tab has details.
+
 Two backends: **agent** (a subagent of the current session) and **process** (a separate headless `claude -p` run, which needs the `claude` CLI on the machine running the session). The main session also gets `dispatch`, `status` and `projects` tools, so you can ask it to delegate work.
 
 ## Notes

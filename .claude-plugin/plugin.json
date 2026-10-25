@@ -1,6 +1,6 @@
 {
   "name": "orchestrator",
-  "version": "0.1.0",
-  "description": "Orchestrator dashboard: queue and run many Claude Code sessions across projects in parallel, with in-pane docs.",
+  "version": "0.2.0",
+  "description": "Orchestrator dashboard: queue and run many Claude Code sessions across projects in parallel, with in-pane docs and a browser HUD.",
   "types": "./types/index.d.ts"
 }

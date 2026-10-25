@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type {
   OrchBackend as Backend,
   OrchDraft as Draft,
+  OrchHud as HudState,
   OrchProject as Project,
   OrchSettings as Settings,
   OrchTab as Tab,
@@ -12,6 +13,8 @@ import type {
   OrchView as View,
 } from '../types'
 import { DOCS } from './docs'
+import * as hud from './hud'
+import type { HudCommand } from './hud'
 
 type E = EngineInterface
 
@@ -64,7 +67,19 @@ const draft = atom(
   DEFAULT_DRAFT,
   { shape: 'orch-draft-1' },
 )
+const hudState = atom(
+  { plugin: 'orchestrator', key: 'hud' } as const,
+  { isOn: false } as HudState,
+  { shape: 'orch-hud-1' },
+)
 
+// Text the HUD submitted, so its prompt.submit can be told apart from a typed one.
+const hudPrompts = new Set<string>()
+const HUD_CONTEXT =
+  'This message was sent from the Orchestrator HUD, a visual and voice dashboard. ' +
+  'Your reply is shown there and may be read aloud: keep it short and conversational, ' +
+  'lead with the answer, and avoid tables and long code blocks. To start work that ' +
+  `runs in parallel, use the ${'mcp__orchestrator__'}dispatch tool.`
 // Live handles. A reload starts these over; the task records stay.
 type Handle = { return: (value?: never) => Promise<unknown> }
 const streams = new Map<string, Handle>()
@@ -78,7 +93,10 @@ const clip = (text: string, cap: number) =>
   text.length > cap ? text.slice(text.length - cap) : text
 const splitArgs = (text: string) => text.split(/\s+/).filter(Boolean)
 const nameOf = (path: string) =>
-  path.replace(/\/+$/, '').split('/').pop() || path
+  path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
+// POSIX (/home/me), Windows drive (C:\code or C:/code) or UNC (\\host\share).
+const isAbsPath = (path: string) =>
+  path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')
 
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
@@ -137,6 +155,14 @@ async function finish(
     status: final,
     endedAt: await $.clock.now(),
     ...(output === undefined ? {} : { output: clip(output, OUTPUT_CAP) }),
+  })
+  hud.event({
+    type: 'msg',
+    role: 'system',
+    text: `Task "${task.title}" ${final === 'done' ? 'complete' : final}.`,
+    taskId: id,
+    status: final,
+    at: await $.clock.now(),
   })
   if (task.isNotify && final !== 'killed') {
     try {
@@ -298,7 +324,7 @@ async function resolveProject(
     p => p.id === ref || p.name.toLowerCase() === key || p.path === ref.trim(),
   )
   if (hit) return hit
-  if (ref.trim().startsWith('/')) {
+  if (isAbsPath(ref.trim())) {
     const made: Project = { id: uid(), name: nameOf(ref), path: ref.trim() }
     await update($, projects, l => [...l, made])
     await saveProjects($)
@@ -314,11 +340,268 @@ function describeTask(t: Task, now: number, withOutput: boolean): string {
   return `${head}\n${t.output ? clip(t.output, 2000) : '(no output yet)'}`
 }
 
+async function retryTask($: E, t: Task) {
+  return addTasks($, [
+    {
+      projectId: t.projectId,
+      title: t.title,
+      prompt: t.prompt,
+      backend: t.backend,
+      model: t.model,
+      agentType: t.agentType,
+      isNotify: t.isNotify,
+    },
+  ])
+}
+
+// ---- HUD --------------------------------------------------------------
+
+async function hudSnapshot($: E) {
+  const [list, projs, cfg] = await Promise.all([
+    read($, tasks),
+    read($, projects),
+    read($, settings),
+  ])
+  const projectName = (id: string) => projs.find(p => p.id === id)?.name ?? 'missing'
+  return {
+    now: await $.clock.now(),
+    maxParallel: cfg.maxParallel,
+    projects: projs.map(p => ({ id: p.id, name: p.name, path: p.path })),
+    tasks: list.slice(-60).map(t => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      backend: t.backend,
+      model: t.model,
+      projectId: t.projectId,
+      project: projectName(t.projectId),
+      prompt: clip(t.prompt, 600),
+      output: clip(t.output, 1500),
+      createdAt: t.createdAt,
+      startedAt: t.startedAt,
+      endedAt: t.endedAt,
+    })),
+  }
+}
+
+async function onHudCommand($: E, cmd: HudCommand) {
+  const toast = (text: string, level = 'info') => hud.event({ type: 'toast', text, level })
+  const list = await read($, tasks)
+  switch (cmd.type) {
+    case 'chat': {
+      const text = String(cmd.text ?? '').trim().slice(0, 8000)
+      if (!text) return
+      hudPrompts.add(text)
+      // Resolves when the turn starts, which waits for an idle session.
+      void $.prompt.submit({ text }).catch(err => {
+        hudPrompts.delete(text)
+        toast(`Could not send: ${String(err)}`, 'error')
+      })
+      return
+    }
+    case 'dispatch': {
+      const projs = await read($, projects)
+      const project = projs.find(p => p.id === cmd.projectId)
+      const prompt = String(cmd.prompt ?? '').trim()
+      if (!project) return toast('Pick a project first.', 'error')
+      if (!prompt) return toast('Write a prompt first.', 'error')
+      await addTasks($, [
+        {
+          projectId: project.id,
+          title: String(cmd.title ?? '').trim() || prompt.slice(0, 40),
+          prompt,
+          backend: cmd.backend === 'process' ? 'process' : 'agent',
+          model: String(cmd.model ?? '').trim(),
+          agentType: 'general-purpose',
+          isNotify: false,
+        },
+      ])
+      return toast(`Queued in ${project.name}.`)
+    }
+    case 'kill':
+      return killTask($, cmd.id)
+    case 'retry': {
+      const t = list.find(x => x.id === cmd.id)
+      if (t && t.status !== 'running' && t.status !== 'queued') await retryTask($, t)
+      return
+    }
+    case 'remove':
+      await update($, tasks, l => l.filter(t => t.id !== cmd.id || t.status === 'running'))
+      return
+    case 'clear':
+      await update($, tasks, l =>
+        l.filter(t => t.status === 'running' || t.status === 'queued'),
+      )
+      return
+  }
+}
+
+// The server is a child for the session's life: the loop that reads its
+// output is its life, and a reload kills it (the hud atom restarts it).
+let hudChild: Handle | undefined
+let hudStarting: Promise<number> | undefined
+let hudTicker: { cancel: () => void } | undefined
+let hudTicks = 0
+let isHudFlushing = false
+
+async function hudPost($: E, path: string, body?: unknown) {
+  return $.http.fetch(`http://127.0.0.1:${hud.link.port}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-orch-token': hud.link.token },
+    body: body === undefined ? '' : JSON.stringify(body),
+  })
+}
+
+async function hudTick($: E) {
+  if (isHudFlushing || !hud.isUp()) return
+  isHudFlushing = true
+  try {
+    hudTicks++
+    if (hudTicks % hud.SNAPSHOT_EVERY === 0) {
+      hud.offerSnapshot(await hudSnapshot($), await $.clock.now())
+    }
+    const batch = hud.drain()
+    if (batch.length === 0) return
+    await hudPost($, '/api/push', batch)
+    hud.pushed(await $.clock.now())
+  } catch {
+    // The server is restarting or gone; its read loop notices the exit.
+  } finally {
+    isHudFlushing = false
+  }
+}
+
+async function hudToken($: E): Promise<string> {
+  // Kept across sessions, so an open tab reconnects after a reload.
+  const stored = await $.store.get('hudToken')
+  if (hud.isToken(stored)) return stored
+  const made = hud.makeToken()
+  await $.store.set('hudToken', made)
+  return made
+}
+
+function startHudServer($: E): Promise<number> {
+  if (hud.isUp()) return Promise.resolve(hud.link.port)
+  if (hudStarting) return hudStarting
+
+  const starting = (async () => {
+    hud.link.token = await hudToken($)
+    const stream = $.process.spawn({
+      argv: [
+        'node',
+        `${$.plugin.root}/web/server.mjs`,
+        '--port',
+        String(hud.PREFERRED_PORT),
+        '--token',
+        hud.link.token,
+      ],
+    })
+    hudChild = stream as unknown as Handle
+
+    return new Promise<number>((resolve, reject) => {
+      let err = ''
+      let isSettled = false
+      const settle = (fn: () => void) => {
+        if (!isSettled) {
+          isSettled = true
+          fn()
+        }
+      }
+      const timer = $.clock.after(hud.READY_TIMEOUT_MS, () =>
+        settle(() => reject(new Error(`The HUD server did not start. ${err.trim()}`))),
+      )
+      const lines = hud.lineReader()
+
+      void (async () => {
+        try {
+          for await (const piece of stream) {
+            if (piece.stream === 'stderr') {
+              err = (err + piece.text).slice(-2000)
+              continue
+            }
+            for (const line of lines(piece.text)) {
+              const msg = hud.parseLine(line)
+              if (!msg) continue
+              if ('ready' in msg) {
+                hud.connected(msg.ready)
+                hudTicker?.cancel()
+                hudTicker = $.clock.every(hud.TICK_MS, () => void hudTick($))
+                timer.cancel()
+                settle(() => resolve(msg.ready))
+              } else {
+                try {
+                  await onHudCommand($, msg.command)
+                } catch (e) {
+                  hud.event({ type: 'toast', text: `Command failed: ${String(e)}`, level: 'error' })
+                }
+              }
+            }
+          }
+        } catch (e) {
+          err += String(e)
+        } finally {
+          hud.disconnected()
+          hudChild = undefined
+          hudStarting = undefined
+          hudTicker?.cancel()
+          hudTicker = undefined
+          timer.cancel()
+          settle(() =>
+            reject(
+              new Error(
+                `The HUD server exited. ${err.trim() || 'Is Node.js installed and on PATH?'}`,
+              ),
+            ),
+          )
+        }
+      })()
+    })
+  })()
+
+  hudStarting = starting
+  // A failed start must not stick: the next call tries again.
+  starting.catch(() => {
+    if (hudStarting === starting) hudStarting = undefined
+  })
+  return starting
+}
+
+async function stopHud() {
+  const child = hudChild
+  hudChild = undefined
+  if (!child) return
+  try {
+    await child.return()
+  } catch {
+    // Already gone.
+  }
+}
+
+async function startHud($: E, isOpening: boolean): Promise<string> {
+  await update($, hudState, () => ({ isOn: true }))
+  await startHudServer($)
+  if (isOpening) {
+    let isOpened = false
+    try {
+      const res = await hudPost($, '/api/open')
+      isOpened = res.ok && (JSON.parse(res.text) as { ok?: boolean }).ok === true
+    } catch {
+      // Fall through to the link.
+    }
+    if (!isOpened) return `HUD running. Open ${hud.hudUrl()} in your browser.`
+  }
+  return `HUD running at ${hud.hudUrl()}`
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'orchestrator',
       description: 'Open the orchestrator dashboard pane',
+    })
+    await $.command.register({
+      name: 'orchestrator-hud',
+      description: 'Open the orchestrator HUD in your browser (add "stop" to shut it down)',
     })
 
     // Projects and settings outlive the session.
@@ -392,6 +675,10 @@ export const register: Register = on => {
     })
 
     void pump($)
+    // A reload kills the HUD's server; bring it back for any open browser tab.
+    if ((await read($, hudState)).isOn) {
+      void startHud($, false).catch(err => $.ui.log(`HUD: ${String(err)}`, { to: 'debug' }))
+    }
     return next(e)
   })
 
@@ -400,7 +687,75 @@ export const register: Register = on => {
     return { text: 'Orchestrator opened.' }
   })
 
+  on('command.run', { command: 'orchestrator-hud' }, async ($, e) => {
+    if (e.args.trim() === 'stop') {
+      await update($, hudState, () => ({ isOn: false }))
+      await stopHud()
+      return { text: 'HUD stopped.' }
+    }
+    try {
+      return { text: await startHud($, true) }
+    } catch (err) {
+      await update($, hudState, () => ({ isOn: false }))
+      return { text: `Could not start the HUD: ${String(err)}` }
+    }
+  })
+
+  // ---- Mirror the main conversation into the HUD ----------------------
+
+  on('prompt.submit', async ($, e, next) => {
+    // Never let the HUD stand between the person and their prompt.
+    let isHud = false
+    try {
+      if (hud.isUp() && !e.command && !e.isMeta) {
+        isHud = hudPrompts.delete(e.text)
+        const isOrch = e.origin?.kind === 'plugin' && e.text.startsWith('[orchestrator]')
+        hud.event({
+          type: 'msg',
+          role: isOrch ? 'system' : 'user',
+          source: isHud ? 'hud' : 'terminal',
+          text: e.text,
+          at: await $.clock.now(),
+        })
+      }
+    } catch {
+      // The mirror is best effort.
+    }
+    if (isHud) return next({ ...e, context: [...(e.context ?? []), HUD_CONTEXT] })
+    return next(e)
+  })
+
+  on('turn.start', async ($, e, next) => {
+    if (!e.agentId) hud.setPhase('thinking')
+    return next(e)
+  })
+
+  on('turn.step', async function* ($, e, next) {
+    const stream = next(e)
+    if (!hud.isUp() || e.agentId) return yield* stream
+    for await (const chunk of stream) {
+      if (chunk.kind === 'text') hud.delta(chunk.text)
+      else if (chunk.kind === 'tool') hud.setPhase('tool', chunk.name)
+      yield chunk
+    }
+    return await stream.result
+  })
+
   on('turn.complete', async ($, e, next) => {
+    if (!e.agentId && hud.isUp()) {
+      hud.event({
+        type: 'msg',
+        role: e.reason === 'answer' ? 'assistant' : 'system',
+        text:
+          e.reason === 'answer'
+            ? e.answer
+            : e.reason === 'aborted'
+              ? 'Interrupted.'
+              : `The turn ended: ${e.reason}.`,
+        at: await $.clock.now(),
+      })
+      hud.setPhase('idle')
+    }
     if (e.agentId) {
       try {
         const status: TaskStatus =
@@ -485,6 +840,7 @@ export const register: Register = on => {
       read($, draft),
     ])
     const now = await $.clock.now()
+    const isHudOn = (await read($, hudState)).isOn
     const room = Math.max(4, (e.viewport?.rows ?? 24) - 8)
 
     const setTab = (tab: Tab) => update($, view, x => ({ ...x, tab }))
@@ -569,17 +925,7 @@ export const register: Register = on => {
                   <Button
                     key="retry"
                     onPress={async () => {
-                      await addTasks($, [
-                        {
-                          projectId: selected.projectId,
-                          title: selected.title,
-                          prompt: selected.prompt,
-                          backend: selected.backend,
-                          model: selected.model,
-                          agentType: selected.agentType,
-                          isNotify: selected.isNotify,
-                        },
-                      ])
+                      await retryTask($, selected)
                     }}
                   >
                     Retry
@@ -776,7 +1122,7 @@ export const register: Register = on => {
               variant="primary"
               onPress={async () => {
                 const path = d.projPath.trim()
-                if (!path.startsWith('/')) return toast('Use an absolute path, starting with /.')
+                if (!isAbsPath(path)) return toast('Use an absolute path, like /home/me/api or C:\\code\\api.')
                 try {
                   await $.fs.stat(path)
                 } catch {
@@ -870,6 +1216,19 @@ export const register: Register = on => {
               {v.tab === id ? `[${label}]` : label}{' '}
             </Button>
           ))}
+          <Button
+            key="tab-hud"
+            plain
+            onPress={async () => {
+              try {
+                toast(await startHud($, true))
+              } catch (err) {
+                toast(`Could not start the HUD: ${String(err)}`)
+              }
+            }}
+          >
+            <Text color="cyan">{isHudOn ? 'HUD*' : 'HUD'}</Text>
+          </Button>
         </Box>
         {v.tab === 'sessions' && sessions()}
         {v.tab === 'new' && create()}
