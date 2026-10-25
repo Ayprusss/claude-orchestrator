@@ -28,7 +28,17 @@ Open the pane any time with ${'`/orchestrator`'}.
 
 ## Parallel limit
 
-Only **Max parallel** tasks run at once (Settings tab, default 3). Extra tasks wait in the queue and start by themselves as slots free up.`,
+Only **Max parallel** tasks run at once (Settings tab or the HUD's settings, default 3, up to 16). Extra tasks wait in the queue and start by themselves as slots free up.
+
+## Usage limit standby
+
+When your plan's usage limit is reached (the 5-hour or the weekly window), the orchestrator goes on **standby**, which is on by default:
+
+- Queued tasks wait instead of launching.
+- A task cut off by the limit goes back in the queue instead of failing. When it runs again, it is told to check for partial work.
+- When the limit resets, everything resumes by itself. If the reset time is unknown, the orchestrator checks every few minutes with a one-token request.
+
+Turn it off in Settings (**When the usage limit is reached**: keep going) to have tasks launch and fail as before. **Resume now** (Sessions tab, or the HUD) lifts standby by hand.`,
   },
   {
     id: 'backends',
@@ -143,6 +153,7 @@ A project path the tool has not seen is registered automatically if you pass an 
 | agent task never finishes | Open it and check whether it is waiting on a question |
 | Kill does nothing for an agent task | The agent already finished, or the stop request was refused; the task is still marked killed |
 | Edits collide | Two tasks share files in one folder. Use separate worktrees |
+| Everything is on standby | The usage limit was reached. It resumes at the reset, or press **Resume now** |
 
 ## Where state lives
 
@@ -170,6 +181,29 @@ Open it with ${'`/orchestrator-hud`'}, or the **HUD** button at the end of this 
 - **DISPATCH** queues a task directly, in the project you pick, with no conversation.
 - **Mic** (Chrome or Edge): speak, and the text is sent when you stop.
 - **Speaker** (top right): reads replies and task completions aloud.
+- **Gear** (top right): settings for the number of parallel agents, usage-limit standby and code-change pop-ups, plus your account's 5-hour and weekly usage.
+
+## Code changes
+
+Every edit the main session or an agent task makes shows up as a code diff:
+
+- **Pop-up window** (on by default): a small diff window opens beside the agent that made the change, on its side of the orb. An animated line runs from the window to that agent's moon, or to the orb's core for the main session. A newer change from the same agent replaces the window's contents, and **‹ ›** pages back through earlier changes.
+- **Resize** a window by dragging its edges or corner, and **move** it by dragging its title. New windows open at the last size you set. Double-click the corner, or use **Reset window size** in Settings, to go back to the default.
+- **✕** closes the window until that agent's next change. **MUTE** stops pop-ups from that agent for the rest of the page's life. **Esc** closes them all. A finished task's window closes by itself after 20 seconds unless the pointer is on it.
+- **Comms** lists every change, with **VIEW** to reopen it. A task's details list its own changes, and its row in Operations shows a ✎ count.
+- Turn pop-ups off in Settings (**Pop up code changes**), and changes are only listed.
+
+## The all-done ping
+
+When the main session and every task are done (nothing running, nothing queued), the orchestrator plays a chime and the HUD flashes **ALL OPERATIONS COMPLETE**. It waits 3 seconds first, because a finished task wakes the main session to read the result. A quick reply under 15 seconds with no tasks stays quiet. Tasks held back by a usage limit count as not done.
+
+The chime plays on the machine running Claude Code, even with the HUD closed: through PowerShell on Windows, \`afplay\` on macOS, and \`paplay\` or \`aplay\` on Linux. Turn it off in Settings (**Ping when all work is done**), and use **Test ping** to hear it.
+
+Changes made by *process* tasks (separate \`claude -p\` runs) are not shown, since their edits happen outside this session.
+
+## When tokens run out
+
+When the usage limit is reached, the HUD powers down: the background turns red, the orb dims and sputters, and a banner counts down to the reset. Tasks waiting for it are marked **standby**. When the limit lifts, the orb powers back up. The header meters (5H, 7D) turn amber at 80% and red at 100%.
 
 A prompt sent while the session is busy waits (shown dimmed) until the session is idle.
 

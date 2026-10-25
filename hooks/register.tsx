@@ -5,6 +5,7 @@ import type {
   OrchBackend as Backend,
   OrchDraft as Draft,
   OrchHud as HudState,
+  OrchLimit as LimitState,
   OrchProject as Project,
   OrchSettings as Settings,
   OrchTab as Tab,
@@ -12,20 +13,37 @@ import type {
   OrchStatus as TaskStatus,
   OrchView as View,
 } from '../types'
+import { buildDiff } from './diffs'
 import { DOCS } from './docs'
 import * as hud from './hud'
 import type { HudCommand } from './hud'
+import {
+  NO_LIMIT,
+  RECHECK_MS,
+  RESUME_GRACE_MS,
+  blockingWindow,
+  isLimitError,
+  looksLikeLimit,
+  resetFromText,
+  resumedPrompt,
+  windowName,
+  windowsForHud,
+} from './limits'
 
 type E = EngineInterface
 
 const PANE = 'orchestrator'
 const OUTPUT_CAP = 8000
+const MAX_PARALLEL = 16
 const TOOL = 'mcp__orchestrator__'
 
 const DEFAULT_SETTINGS: Settings = {
   maxParallel: 3,
   claudeBin: 'claude',
   processArgs: '--permission-mode acceptEdits',
+  isStandbyOnLimit: true,
+  isDiffViewOn: true,
+  isPingOn: true,
 }
 const DEFAULT_VIEW: View = { tab: 'sessions', selected: '', docPage: 'start' }
 const DEFAULT_DRAFT: Draft = {
@@ -55,7 +73,7 @@ const tasks = atom(
 const settings = atom(
   { plugin: 'orchestrator', key: 'settings' } as const,
   DEFAULT_SETTINGS,
-  { shape: 'orch-settings-1' },
+  { shape: 'orch-settings-4' },
 )
 const view = atom(
   { plugin: 'orchestrator', key: 'view' } as const,
@@ -72,6 +90,11 @@ const hudState = atom(
   { isOn: false } as HudState,
   { shape: 'orch-hud-1' },
 )
+const limitState = atom(
+  { plugin: 'orchestrator', key: 'limit' } as const,
+  NO_LIMIT as LimitState,
+  { shape: 'orch-limit-1' },
+)
 
 // Text the HUD submitted, so its prompt.submit can be told apart from a typed one.
 const hudPrompts = new Set<string>()
@@ -87,6 +110,22 @@ const killed = new Set<string>()
 const agentToTask = new Map<string, string>()
 const unclaimed = new Map<string, { answer: string; status: TaskStatus }>()
 let isPumping = false
+// Agents that StopFailure reported out of tokens, claimed at their turn.complete.
+const limitedAgents = new Set<string>()
+let recheckTimer: { cancel: () => void } | undefined
+// After a hand-made resume, a stale 100% reading must not undo it at once.
+let windowsIgnoredUntil = 0
+
+// "All work done": the main session idle and no task running or queued.
+let isMainBusy = false
+let busySince = 0 // when the current stretch of work began; 0 while idle
+let hadTask = false // a task ran in this stretch
+let idleTimer: { cancel: () => void } | undefined
+let platform: 'windows' | 'mac' | 'linux' | undefined
+// A task's end wakes the main session a moment later: wait that out before calling it done.
+const PING_SETTLE_MS = 3000
+// A quick reply with no tasks is not "work" worth a ping.
+const QUICK_TURN_MS = 15_000
 
 const uid = () => Math.random().toString(36).slice(2, 8)
 const clip = (text: string, cap: number) =>
@@ -130,6 +169,11 @@ async function refreshStatus($: E) {
   const list = await read($, tasks)
   const run = list.filter(t => t.status === 'running').length
   const wait = list.filter(t => t.status === 'queued').length
+  const lim = await read($, limitState)
+  if (lim.isLimited) {
+    $.ui.status(`orch: usage limit, standby (${run} running, ${wait} queued)`)
+    return
+  }
   $.ui.status(run + wait === 0 ? undefined : `orch: ${run} running, ${wait} queued`)
 }
 
@@ -187,13 +231,17 @@ async function launch($: E, task: Task) {
   if (task.backend === 'agent') {
     try {
       const res = await $.agent.spawn({
-        prompt: task.prompt,
+        prompt: resumedPrompt(task.prompt, task.interruptions),
         description: task.title.slice(0, 60),
         subagentType: task.agentType || 'general-purpose',
         cwd: project.path,
         ...(task.model ? { model: task.model } : {}),
       })
       if (res.deny !== undefined || res.agentId === undefined) {
+        if (looksLikeLimit(res.deny)) {
+          await onLimitFailure($, task.id, res.deny ?? '', 'rate_limit', 0)
+          return
+        }
         await finish($, task.id, 'failed', res.deny ?? 'The agent did not start.')
         return
       }
@@ -210,7 +258,12 @@ async function launch($: E, task: Task) {
     return
   }
 
-  const argv = [cfg.claudeBin, '-p', task.prompt, ...splitArgs(cfg.processArgs)]
+  const argv = [
+    cfg.claudeBin,
+    '-p',
+    resumedPrompt(task.prompt, task.interruptions),
+    ...splitArgs(cfg.processArgs),
+  ]
   if (task.model) argv.push('--model', task.model)
   let buf = ''
   let flushedAt = 0
@@ -233,7 +286,9 @@ async function launch($: E, task: Task) {
       }
     }
     if (killed.has(task.id)) await finish($, task.id, 'killed', buf)
-    else await finish($, task.id, code === 0 ? 'done' : 'failed', buf)
+    else if (code !== 0 && looksLikeLimit(buf)) {
+      await onLimitFailure($, task.id, buf, 'rate_limit', resetFromText(buf, await $.clock.now()))
+    } else await finish($, task.id, code === 0 ? 'done' : 'failed', buf)
   } catch (err) {
     await finish(
       $,
@@ -249,21 +304,94 @@ async function pump($: E) {
   isPumping = true
   try {
     for (;;) {
-      const [list, cfg] = await Promise.all([read($, tasks), read($, settings)])
+      const [list, cfg, lim] = await Promise.all([
+        read($, tasks),
+        read($, settings),
+        read($, limitState),
+      ])
       const running = list.filter(t => t.status === 'running').length
       const next = list.find(t => t.status === 'queued')
       if (!next || running >= cfg.maxParallel) break
+      if (cfg.isStandbyOnLimit !== false) {
+        if (lim.isLimited) break
+        // Don't start work the account cannot pay for.
+        if (await checkWindows($)) break
+      }
       await setTask($, next.id, {
         status: 'running',
         startedAt: await $.clock.now(),
       })
+      hadTask = true
+      await markBusy($)
       void launch($, { ...next, status: 'running' })
     }
   } finally {
     isPumping = false
   }
   await refreshStatus($)
+  await checkIdle($)
 }
+
+// ---- The all-done ping ----------------------------------------------
+
+async function markBusy($: E) {
+  idleTimer?.cancel()
+  idleTimer = undefined
+  if (!busySince) busySince = await $.clock.now()
+}
+
+/** Once nothing is left to do, wait a beat, then ping if work was done. */
+async function checkIdle($: E) {
+  if (isMainBusy || !busySince) return
+  const list = await read($, tasks)
+  if (list.some(t => t.status === 'running' || t.status === 'queued')) return
+  idleTimer?.cancel()
+  idleTimer = $.clock.after(PING_SETTLE_MS, () => void settleIdle($))
+}
+
+async function settleIdle($: E) {
+  idleTimer = undefined
+  const list = await read($, tasks)
+  if (isMainBusy || !busySince || list.some(t => t.status === 'running' || t.status === 'queued')) return
+  const now = await $.clock.now()
+  const isWork = hadTask || now - busySince >= QUICK_TURN_MS
+  busySince = 0
+  hadTask = false
+  if (!isWork || (await read($, settings)).isPingOn === false) return
+  hud.event({ type: 'msg', role: 'system', text: 'All work complete.', status: 'allclear', at: now })
+  hud.event({ type: 'ping' })
+  await playPing($)
+}
+
+/** Plays assets/ping.wav with the platform's own player. */
+async function playPing($: E) {
+  try {
+    if (!platform) {
+      if ((await $.env.get('OS')) === 'Windows_NT') platform = 'windows'
+      else {
+        const r = await $.process.run(['uname'], { timeoutMs: 5000 })
+        platform = r.stdout.trim() === 'Darwin' ? 'mac' : 'linux'
+      }
+    }
+    const wav = `${$.plugin.root}/assets/ping.wav`
+    if (platform === 'windows') {
+      // $.audio.play has no player on Windows terminals; .NET's SoundPlayer does.
+      const path = wav.replace(/\//g, '\\').replace(/'/g, "''")
+      await $.process.run(
+        ['powershell', '-NoProfile', '-NonInteractive', '-Command', `(New-Object System.Media.SoundPlayer '${path}').PlaySync()`],
+        { timeoutMs: 15_000 },
+      )
+    } else if (platform === 'mac') {
+      await $.audio.play({ asset: 'assets/ping.wav' })
+    } else {
+      const r = await $.process.run(['paplay', wav], { timeoutMs: 15_000 }).catch(() => undefined)
+      if (!r || r.exitCode !== 0) await $.process.run(['aplay', '-q', wav], { timeoutMs: 15_000 })
+    }
+  } catch {
+    // No player on this machine: the HUD still shows it.
+  }
+}
+
 
 type NewTask = {
   projectId: string
@@ -314,6 +442,187 @@ async function killTask($: E, id: string) {
   await pump($)
 }
 
+// ---- Usage limit: standby -------------------------------------------
+
+async function usageWindows($: E) {
+  try {
+    return (await $.session.usage()).rateLimits
+  } catch {
+    return []
+  }
+}
+
+/** Enters standby if a usage window is used up; true when it is. */
+async function checkWindows($: E): Promise<boolean> {
+  const now = await $.clock.now()
+  if (now < windowsIgnoredUntil) return false
+  const w = blockingWindow(await usageWindows($), now)
+  if (!w) return false
+  await enterLimit($, w.kind, w.until, `${windowName(w.kind)} limit used up`)
+  return true
+}
+
+function scheduleRecheck($: E, delayMs: number) {
+  recheckTimer?.cancel()
+  // Long waits are taken in steps, so a sleeping laptop catches up on wake.
+  const ms = Math.min(Math.max(5000, delayMs), 30 * 60_000)
+  recheckTimer = $.clock.after(ms, () => void recheck($).catch(() => scheduleRecheck($, RECHECK_MS)))
+}
+
+async function enterLimit($: E, kind: string, until: number, reason: string) {
+  const now = await $.clock.now()
+  const cur = await read($, limitState)
+  const next: LimitState = {
+    isLimited: true,
+    since: cur.isLimited ? cur.since : now,
+    until: until || (cur.isLimited ? cur.until : 0),
+    kind: until || !cur.isLimited ? kind : cur.kind,
+    reason,
+  }
+  await update($, limitState, () => next)
+  scheduleRecheck($, next.until ? next.until - now + RESUME_GRACE_MS : RECHECK_MS)
+  if (!cur.isLimited) {
+    const cfg = await read($, settings)
+    const when = next.until ? ` It resets in ${fmtDuration(next.until - now)}.` : ''
+    const text =
+      cfg.isStandbyOnLimit !== false
+        ? `Usage limit reached. Operations on standby.${when}`
+        : `Usage limit reached.${when} Standby is off, so new tasks will fail.`
+    hud.event({ type: 'msg', role: 'system', text, status: 'limit', at: now })
+    void $.ui.toast(text)
+  }
+  await refreshStatus($)
+}
+
+async function exitLimit($: E, text = 'Usage limit lifted. Resuming operations.') {
+  const cur = await read($, limitState)
+  recheckTimer?.cancel()
+  recheckTimer = undefined
+  if (!cur.isLimited) return
+  await update($, limitState, () => NO_LIMIT)
+  hud.event({ type: 'msg', role: 'system', text, status: 'resume', at: await $.clock.now() })
+  void $.ui.toast(text)
+  await pump($)
+}
+
+/** At the reset time (or periodically when it is unknown), see if tokens are back. */
+async function recheck($: E) {
+  const cur = await read($, limitState)
+  if (!cur.isLimited) return
+  const now = await $.clock.now()
+  if (cur.until && now < cur.until + RESUME_GRACE_MS - 2000) {
+    scheduleRecheck($, cur.until + RESUME_GRACE_MS - now)
+    return
+  }
+  // Ask the API directly with the smallest request there is.
+  const r = await $.model.complete({ model: 'haiku', prompt: 'ping', maxTokens: 1, timeoutMs: 30_000 })
+  const isStillLimited = !r.isAnswered && r.reason === 'api-error' && isLimitError(r.error)
+  if (!isStillLimited) {
+    await exitLimit($)
+    return
+  }
+  const w = blockingWindow(await usageWindows($), now)
+  await update($, limitState, x => ({ ...x, until: w?.until ?? 0, kind: w?.kind ?? x.kind }))
+  scheduleRecheck($, w ? w.until - now + RESUME_GRACE_MS : RECHECK_MS)
+}
+
+/** Sends a cut-off task back to the queue to run again after the reset. */
+async function requeue($: E, id: string, output: string) {
+  const task = (await read($, tasks)).find(t => t.id === id)
+  if (!task || task.status === 'killed') return
+  streams.delete(id)
+  if (task.agentId) agentToTask.delete(task.agentId)
+  const note = '[standby] Cut off by a usage limit; it runs again when the limit resets.'
+  await update($, tasks, list =>
+    list.map(t => {
+      if (t.id !== id) return t
+      const { agentId: _a, startedAt: _s, endedAt: _e, ...rest } = t
+      return {
+        ...rest,
+        status: 'queued' as const,
+        interruptions: (t.interruptions ?? 0) + 1,
+        output: clip(`${output || t.output}\n\n${note}`, OUTPUT_CAP),
+      }
+    }),
+  )
+  hud.event({
+    type: 'msg',
+    role: 'system',
+    text: `Task "${task.title}" is on standby until the usage limit resets.`,
+    taskId: id,
+    status: 'standby',
+    at: await $.clock.now(),
+  })
+  await refreshStatus($)
+}
+
+/** A task ran out of tokens: standby (requeue) or fail, by the setting. */
+async function onLimitFailure($: E, id: string, output: string, kind: string, until: number) {
+  const w = blockingWindow(await usageWindows($), await $.clock.now())
+  await enterLimit($, w?.kind ?? kind, w?.until ?? until, 'a task ran out of tokens')
+  if ((await read($, settings)).isStandbyOnLimit !== false) await requeue($, id, output)
+  else await finish($, id, 'failed', output)
+}
+
+/**
+ * An agent task ended on an error. StopFailure, which says whether it was a
+ * usage limit, may come just after turn.complete, so this runs a beat later.
+ */
+async function settleAgentError($: E, id: string, agentId: string, answer: string, status: TaskStatus) {
+  const now = await $.clock.now()
+  const w = blockingWindow(await usageWindows($), now)
+  const isLimit = limitedAgents.delete(agentId) || !!w || looksLikeLimit(answer)
+  if (isLimit) await onLimitFailure($, id, answer, 'rate_limit', resetFromText(answer, now))
+  else await finish($, id, status, answer)
+}
+
+// The person's call: if tokens are still out, the next failure re-enters standby.
+async function resumeByHand($: E) {
+  windowsIgnoredUntil = (await $.clock.now()) + 2 * 60_000
+  await exitLimit($, 'Standby lifted by hand. Resuming operations.')
+}
+
+async function applySettings($: E, patch: Partial<Settings>) {
+  const clean: Partial<Settings> = { ...patch }
+  if (clean.maxParallel !== undefined) {
+    clean.maxParallel = Math.min(MAX_PARALLEL, Math.max(1, Math.round(Number(clean.maxParallel) || 1)))
+  }
+  await update($, settings, x => ({ ...x, ...clean }))
+  await saveSettings($)
+  await refreshStatus($)
+  void pump($)
+}
+
+// ---- Code changes for the HUD --------------------------------------
+
+/** Sends the diff of a finished Edit or Write call to the HUD, tagged with its agent. */
+async function reportDiff(
+  $: E,
+  tool: 'Edit' | 'Write',
+  input: Record<string, unknown>,
+  res: unknown,
+) {
+  try {
+    const r = res as { deny?: string; isError?: boolean; result?: unknown }
+    if (r.deny !== undefined || r.isError) return
+    const diff = buildDiff(tool, input, r.result)
+    if (!diff) return
+    const agentId = typeof input.agentId === 'string' ? input.agentId : undefined
+    let taskId = agentId ? agentToTask.get(agentId) : undefined
+    if (agentId && !taskId) taskId = (await read($, tasks)).find(t => t.agentId === agentId)?.id
+    hud.event({
+      type: 'diff',
+      id: uid(),
+      agentId: agentId ?? null,
+      taskId: taskId ?? null,
+      ...diff,
+      at: await $.clock.now(),
+    })
+  } catch {
+    // The view is best effort; the edit itself already happened.
+  }
+}
+
 async function resolveProject(
   $: E,
   ref: string,
@@ -357,15 +666,23 @@ async function retryTask($: E, t: Task) {
 // ---- HUD --------------------------------------------------------------
 
 async function hudSnapshot($: E) {
-  const [list, projs, cfg] = await Promise.all([
+  const [list, projs, cfg, lim, windows] = await Promise.all([
     read($, tasks),
     read($, projects),
     read($, settings),
+    read($, limitState),
+    usageWindows($),
   ])
   const projectName = (id: string) => projs.find(p => p.id === id)?.name ?? 'missing'
   return {
     now: await $.clock.now(),
     maxParallel: cfg.maxParallel,
+    maxParallelCap: MAX_PARALLEL,
+    isStandbyOnLimit: cfg.isStandbyOnLimit !== false,
+    isDiffViewOn: cfg.isDiffViewOn !== false,
+    isPingOn: cfg.isPingOn !== false,
+    limit: lim,
+    usage: windowsForHud(windows),
     projects: projs.map(p => ({ id: p.id, name: p.name, path: p.path })),
     tasks: list.slice(-60).map(t => ({
       id: t.id,
@@ -375,6 +692,7 @@ async function hudSnapshot($: E) {
       model: t.model,
       projectId: t.projectId,
       project: projectName(t.projectId),
+      interruptions: t.interruptions ?? 0,
       prompt: clip(t.prompt, 600),
       output: clip(t.output, 1500),
       createdAt: t.createdAt,
@@ -433,6 +751,21 @@ async function onHudCommand($: E, cmd: HudCommand) {
         l.filter(t => t.status === 'running' || t.status === 'queued'),
       )
       return
+    case 'settings': {
+      const patch: Partial<Settings> = {}
+      if (typeof cmd.maxParallel === 'number') patch.maxParallel = cmd.maxParallel
+      if (typeof cmd.isStandbyOnLimit === 'boolean') patch.isStandbyOnLimit = cmd.isStandbyOnLimit
+      if (typeof cmd.isDiffViewOn === 'boolean') patch.isDiffViewOn = cmd.isDiffViewOn
+      if (typeof cmd.isPingOn === 'boolean') patch.isPingOn = cmd.isPingOn
+      await applySettings($, patch)
+      return toast('Settings saved.')
+    }
+    case 'resume':
+      return resumeByHand($)
+    case 'ping':
+      // The settings page's "test" button.
+      hud.event({ type: 'ping', isTest: true })
+      return playPing($)
   }
 }
 
@@ -674,6 +1007,13 @@ export const register: Register = on => {
       inputSchema: { type: 'object', properties: {} },
     })
 
+    // Standby outlives a reload; its timer does not.
+    const lim = await read($, limitState)
+    if (lim.isLimited) {
+      const now = await $.clock.now()
+      scheduleRecheck($, lim.until ? lim.until + RESUME_GRACE_MS - now : 60_000)
+    }
+
     void pump($)
     // A reload kills the HUD's server; bring it back for any open browser tab.
     if ((await read($, hudState)).isOn) {
@@ -726,7 +1066,15 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    if (!e.agentId) hud.setPhase('thinking')
+    if (!e.agentId) {
+      hud.setPhase('thinking')
+      isMainBusy = true
+      try {
+        await markBusy($)
+      } catch {
+        // Best effort.
+      }
+    }
     return next(e)
   })
 
@@ -756,12 +1104,29 @@ export const register: Register = on => {
       })
       hud.setPhase('idle')
     }
+    if (!e.agentId) {
+      isMainBusy = false
+      try {
+        await checkIdle($)
+      } catch {
+        // Best effort.
+      }
+    }
     if (e.agentId) {
       try {
         const status: TaskStatus =
           e.reason === 'answer' ? 'done' : e.reason === 'aborted' ? 'killed' : 'failed'
         const id = agentToTask.get(e.agentId)
-        if (id) {
+        // An error, or a short answer that is a limit message: maybe out of tokens.
+        const isMaybeLimit =
+          e.reason === 'error' ||
+          (e.reason === 'answer' && e.answer.length < 600 && looksLikeLimit(e.answer))
+        if (id && isMaybeLimit) {
+          agentToTask.delete(e.agentId)
+          const agentId = e.agentId
+          const answer = e.answer
+          $.clock.after(1500, () => void settleAgentError($, id, agentId, answer, 'failed'))
+        } else if (id) {
           agentToTask.delete(e.agentId)
           await finish($, id, status, e.answer)
         } else {
@@ -775,6 +1140,63 @@ export const register: Register = on => {
       } catch {
         // Never let the dashboard disturb a subagent's own completion.
       }
+    }
+    return next(e)
+  })
+
+  // ---- Code changes ---------------------------------------------------
+
+  // Every edit, the main session's and each agent's, goes to the HUD's diff view.
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    const res = await next(e)
+    if (hud.isUp()) void reportDiff($, 'Edit', e as unknown as Record<string, unknown>, res)
+    return res
+  })
+
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    const res = await next(e)
+    if (hud.isUp()) void reportDiff($, 'Write', e as unknown as Record<string, unknown>, res)
+    return res
+  })
+
+  // ---- Usage limits ---------------------------------------------------
+
+  // A model call died on an API error; rate_limit and billing_error mean no tokens.
+  on('classic.StopFailure', async ($, e, next) => {
+    try {
+      if (isLimitError(e.error)) {
+        if (e.agent_id) limitedAgents.add(e.agent_id)
+        const now = await $.clock.now()
+        const w = blockingWindow(await usageWindows($), now)
+        await enterLimit(
+          $,
+          w?.kind ?? e.error,
+          w?.until ?? resetFromText(e.error_details ?? '', now),
+          e.error_details || e.error,
+        )
+      }
+    } catch {
+      // Best effort: the task's own end still settles it.
+    }
+    return next(e)
+  })
+
+  // The account's windows moved: enter standby at 100%, leave it once a
+  // window that put us there has room again.
+  on('session.measure', async ($, e, next) => {
+    try {
+      if (e.changed.includes('rateLimits') && e.rateLimits.length > 0) {
+        const now = await $.clock.now()
+        const w = blockingWindow(e.rateLimits, now)
+        const cur = await read($, limitState)
+        if (w && now >= windowsIgnoredUntil) {
+          await enterLimit($, w.kind, w.until, `${windowName(w.kind)} limit used up`)
+        } else if (!w && cur.isLimited && e.rateLimits.some(x => x.kind === cur.kind)) {
+          await exitLimit($)
+        }
+      }
+    } catch {
+      // Best effort.
     }
     return next(e)
   })
@@ -841,6 +1263,7 @@ export const register: Register = on => {
     ])
     const now = await $.clock.now()
     const isHudOn = (await read($, hudState)).isOn
+    const lim = await read($, limitState)
     const room = Math.max(4, (e.viewport?.rows ?? 24) - 8)
 
     const setTab = (tab: Tab) => update($, view, x => ({ ...x, tab }))
@@ -866,6 +1289,20 @@ export const register: Register = on => {
       const rows = [...list].reverse().slice(0, Math.max(3, Math.floor(room / 2)))
       return (
         <Box flexDirection="column">
+          {lim.isLimited && (
+            <Box>
+              <Text color="red" bold>
+                USAGE LIMIT{' '}
+              </Text>
+              <Text color="red">
+                {cfg.isStandbyOnLimit === false ? 'reached, standby off' : 'standby'}
+                {lim.until ? `, resets in ${fmtDuration(lim.until - now)}` : ', checking every few minutes'}{' '}
+              </Text>
+              <Button key="resume" plain onPress={() => void resumeByHand($)}>
+                [resume now]
+              </Button>
+            </Box>
+          )}
           <Text>
             <Text color="yellow">{count('running')} running</Text>
             {'  '}
@@ -1148,11 +1585,7 @@ export const register: Register = on => {
     )
 
     // ---- Settings -------------------------------------------------------
-    const setSettings = async (patch: Partial<Settings>) => {
-      await update($, settings, x => ({ ...x, ...patch }))
-      await saveSettings($)
-      void pump($)
-    }
+    const setSettings = (patch: Partial<Settings>) => applySettings($, patch)
     const settingsTab = () =>
       hasForms ? (
         <Box flexDirection="column">
@@ -1160,8 +1593,38 @@ export const register: Register = on => {
             key="max-parallel"
             label="Max parallel sessions"
             value={String(cfg.maxParallel)}
-            options={[1, 2, 3, 4, 5, 6, 8].map(n => ({ value: String(n), label: String(n) }))}
+            options={[1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16].map(n => ({ value: String(n), label: String(n) }))}
             onSelect={(value: string) => void setSettings({ maxParallel: Number(value) })}
+          />
+          <Select
+            key="standby"
+            label="When the usage limit is reached"
+            value={cfg.isStandbyOnLimit === false ? 'off' : 'on'}
+            options={[
+              { value: 'on', label: 'standby: hold tasks until the limit resets' },
+              { value: 'off', label: 'keep going: tasks fail' },
+            ]}
+            onSelect={(value: string) => void setSettings({ isStandbyOnLimit: value !== 'off' })}
+          />
+          <Select
+            key="diff-view"
+            label="HUD code changes"
+            value={cfg.isDiffViewOn === false ? 'off' : 'on'}
+            options={[
+              { value: 'on', label: 'pop up each change beside its agent' },
+              { value: 'off', label: 'list only (open from Comms)' },
+            ]}
+            onSelect={(value: string) => void setSettings({ isDiffViewOn: value !== 'off' })}
+          />
+          <Select
+            key="ping"
+            label="When all work is done"
+            value={cfg.isPingOn === false ? 'off' : 'on'}
+            options={[
+              { value: 'on', label: 'ping' },
+              { value: 'off', label: 'stay quiet' },
+            ]}
+            onSelect={(value: string) => void setSettings({ isPingOn: value !== 'off' })}
           />
           <Input
             key="claude-bin"

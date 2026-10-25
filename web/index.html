@@ -131,7 +131,8 @@ header {
 .empty { padding: 22px 16px; color: var(--muted); font: 12px/1.6 var(--mono); }
 
 /* comms */
-.msg { padding: 10px 14px; border-bottom: 1px solid rgba(92,225,255,.05); animation: rise .35s ease-out; }
+.msg { padding: 10px 14px; border-bottom: 1px solid rgba(92,225,255,.05); }
+.msg.fresh { animation: rise .35s ease-out; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 .msg .who { font: 10px var(--mono); letter-spacing: .2em; color: var(--muted); margin-bottom: 3px; display: flex; gap: 8px; }
 .msg .who time { margin-left: auto; letter-spacing: .05em; }
@@ -141,7 +142,8 @@ header {
 .msg.user .body { color: #c9d4ff; }
 .msg.system { padding: 6px 14px; }
 .msg.system .body { font-size: 11px; color: var(--muted); }
-.msg.system.done .body { color: var(--green); } .msg.system.failed .body { color: var(--red); }
+.msg.system.done .body, .msg.system.resume .body, .msg.system.allclear .body { color: var(--green); }
+.msg.system.failed .body, .msg.system.limit .body, .msg.system.standby .body { color: var(--red); }
 .msg.pending { opacity: .55; }
 .msg .body pre { background: rgba(0,0,0,.35); border: 1px solid var(--line); padding: 8px; overflow-x: auto; font-size: 12px; margin: 6px 0; }
 .msg .body code { background: rgba(92,225,255,.08); padding: 0 4px; }
@@ -220,6 +222,135 @@ header {
 .toast.error { border-color: var(--red); color: #ffc2cd; }
 
 /* ---- narrow screens: stack ---- */
+/* ---- usage meters (header) ---- */
+.usage { display: flex; gap: 6px; }
+.u { display: flex; align-items: center; gap: 6px; font: 10px var(--mono); color: var(--muted); letter-spacing: .08em; padding: 4px 8px; border: 1px solid var(--line); white-space: nowrap; }
+.u b { font-weight: 500; color: var(--text); }
+.u .bar-o { width: 46px; height: 4px; background: rgba(255,255,255,.08); position: relative; overflow: hidden; }
+.u .bar-o i { position: absolute; inset: 0 auto 0 0; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+.u.warn .bar-o i { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.u.full .bar-o i { background: var(--red); box-shadow: 0 0 8px var(--red); }
+.u.full { color: var(--red); border-color: rgba(255,77,109,.5); }
+
+/* ---- settings drawer ---- */
+.drawer.settings { left: auto; right: 16px; width: min(420px, calc(100vw - 32px)); transform: translateX(calc(100% + 40px)); }
+.drawer.settings.open { transform: none; }
+.drawer.settings .body { overflow-y: auto; gap: 16px; }
+.set-row { display: flex; flex-direction: column; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.set-row:last-child { border-bottom: 0; }
+.set-head h3 { margin: 0; font-size: 13px; letter-spacing: .24em; color: var(--cyan); }
+.set-desc { font: 11px/1.6 var(--mono); color: var(--muted); }
+.stepper { display: flex; align-items: center; gap: 12px; }
+.stepper .num { font: 700 44px/1 var(--head); color: #fff; min-width: 2ch; text-align: center; text-shadow: 0 0 18px var(--cyan-2); }
+.stepper .icon-btn { width: 34px; height: 34px; font-size: 18px; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; background: var(--line-2); outline: 0; margin: 6px 0; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); border: 0; cursor: pointer; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+input[type=range]::-moz-range-thumb { width: 16px; height: 16px; background: var(--cyan); border: 0; cursor: pointer; }
+.ticks { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--muted); }
+.switch { display: flex; align-items: center; gap: 12px; background: transparent; border: 0; padding: 0; text-align: left; }
+.switch .track { flex: none; width: 46px; height: 24px; border: 1px solid var(--line-2); position: relative; transition: .2s; }
+.switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: var(--muted); transition: .2s; }
+.switch.on .track { border-color: var(--cyan-2); background: rgba(92,225,255,.12); }
+.switch.on .track::after { left: 25px; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+.switch .lbl { font: 600 15px var(--head); letter-spacing: .06em; }
+.meter { display: grid; grid-template-columns: 90px 1fr 50px; align-items: center; gap: 4px 10px; font: 11px var(--mono); margin-bottom: 8px; }
+.meter .bar-o { height: 6px; background: rgba(255,255,255,.07); position: relative; overflow: hidden; }
+.meter .bar-o i { position: absolute; inset: 0 auto 0 0; background: var(--cyan); }
+.meter.warn .bar-o i { background: var(--amber); } .meter.full .bar-o i { background: var(--red); }
+.meter small { grid-column: 2 / 4; color: var(--muted); font-size: 10px; }
+.standby-box { border: 1px solid rgba(255,77,109,.5); background: rgba(255,40,70,.08); padding: 12px; display: flex; flex-direction: column; gap: 6px; font: 12px var(--mono); color: #ffc2cd; align-items: flex-start; }
+
+/* ---- depleted: the usage limit is reached ---- */
+body { transition: background 1.6s; }
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 49; opacity: 0; transition: opacity 1.6s;
+  box-shadow: inset 0 0 180px rgba(255, 25, 55, .42);
+}
+body.limited {
+  --cyan: #ff5f72; --cyan-2: rgba(255, 95, 114, .5); --line: rgba(255, 80, 100, .17); --line-2: rgba(255, 80, 100, .34);
+  --text: #f3d5da; --muted: #9a6670;
+  background: radial-gradient(ellipse at 50% 42%, #2c060c 0%, #150309 42%, #070104 80%);
+}
+body.limited::before { opacity: 1; animation: alarm 3.4s ease-in-out infinite; }
+body.limited::after { background: repeating-linear-gradient(to bottom, rgba(255,60,80,.035) 0 1px, transparent 1px 3px); }
+body.limited .phase { text-shadow: 0 0 16px rgba(255,60,90,.7); }
+body.limited .link.on .led { background: var(--red); box-shadow: 0 0 10px var(--red); }
+body.limited #send { background: #5a1a24; border-color: #5a1a24; color: #f3d5da; }
+@keyframes alarm { 50% { opacity: .45; } }
+.limit-banner {
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%); z-index: 3;
+  display: none; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  padding: 10px 22px 12px; border: 1px solid rgba(255, 80, 100, .55); background: rgba(40, 4, 10, .72);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); width: max-content; max-width: 100%;
+  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%, 0 12px);
+}
+body.limited .limit-banner { display: flex; animation: rise .5s; }
+.lb-title { font-size: 16px; font-weight: 700; letter-spacing: .34em; color: #ff8193; text-shadow: 0 0 14px rgba(255,50,80,.8); }
+.lb-sub { font: 11px var(--mono); color: #e7a9b3; letter-spacing: .04em; }
+.lb-count { font: 500 22px var(--mono); color: #fff; letter-spacing: .08em; text-shadow: 0 0 14px rgba(255,60,90,.7); }
+.limit-banner .ghost { margin-top: 4px; }
+.dot.standby { border: 1px solid var(--red); box-shadow: 0 0 6px rgba(255,77,109,.5); }
+
+/* ---- code change cards ---- */
+#diffLayer { position: fixed; inset: 0; pointer-events: none; z-index: 8; }
+.diff-card {
+  --agent: var(--cyan);
+  position: fixed; width: 360px; pointer-events: auto; display: flex; flex-direction: column;
+  background: rgba(3, 12, 20, .94); border: 1px solid var(--line-2);
+  box-shadow: 0 14px 40px rgba(0,0,0,.6), 0 0 22px color-mix(in srgb, var(--agent) 22%, transparent);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  animation: pop .3s cubic-bezier(.2,.9,.3,1.25); transition: top .3s, left .3s;
+}
+.diff-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--agent); box-shadow: 0 0 10px var(--agent); }
+.diff-card.flash { animation: cardflash .7s ease-out; }
+@keyframes pop { from { opacity: 0; transform: scale(.9); } }
+@keyframes cardflash { 0% { box-shadow: 0 0 0 1px var(--agent), 0 0 40px var(--agent); } }
+.dc-head { display: flex; align-items: center; gap: 8px; padding: 7px 6px 6px 12px; border-bottom: 1px solid var(--line); }
+.dc-head .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--agent); box-shadow: 0 0 8px var(--agent); }
+.dc-who { flex: 1; min-width: 0; font: 700 12px var(--head); letter-spacing: .16em; color: var(--agent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
+.dc-btn { flex: none; display: grid; place-items: center; height: 24px; min-width: 24px; padding: 0 6px; background: transparent; border: 1px solid var(--line); color: var(--muted); font: 11px var(--mono); }
+.dc-btn:hover { color: var(--cyan); border-color: var(--line-2); }
+.dc-btn.x:hover { color: var(--red); border-color: rgba(255,77,109,.5); }
+.dc-file { display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 12px; font: 11px var(--mono); color: var(--muted); border-bottom: 1px solid var(--line); }
+.dc-file .path { flex: 1; min-width: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.dc-file .op { font-size: 9px; letter-spacing: .14em; padding: 0 5px; border: 1px solid var(--line); text-transform: uppercase; }
+.add { color: var(--green); } .del { color: var(--red); }
+.dc-body { max-height: 250px; overflow: auto; font: 11px/1.55 var(--mono); padding: 4px 0; }
+.dl { display: grid; grid-template-columns: 32px 32px 1fr; white-space: pre; min-width: max-content; }
+.dl .n { color: #3d5566; text-align: right; padding-right: 6px; user-select: none; }
+.dl .t { padding-right: 12px; color: #9fb8c6; }
+.dl.a { background: rgba(61,245,160,.11); } .dl.a .t { color: #b5f7d6; }
+.dl.d { background: rgba(255,77,109,.11); } .dl.d .t { color: #ffbcc8; }
+.dl.h { display: block; color: var(--muted); background: rgba(92,225,255,.05); padding: 1px 10px; }
+.dc-foot { display: flex; align-items: center; gap: 6px; padding: 5px 6px 6px 12px; border-top: 1px solid var(--line); font: 10px var(--mono); color: var(--muted); }
+.dc-foot .grow { flex: 1; }
+/* sized by hand: the body takes whatever height the window has */
+.diff-card.sized .dc-body { max-height: none; flex: 1; min-height: 0; }
+.diff-card.dragging { transition: none; user-select: none; }
+.dc-head .grip { cursor: move; }
+.dc-resize {
+  position: absolute; bottom: 0; width: 18px; height: 18px; z-index: 2; touch-action: none;
+  background: linear-gradient(135deg, transparent 50%, var(--agent) 50%, var(--agent) 58%, transparent 58%, transparent 70%, var(--agent) 70%, var(--agent) 78%, transparent 78%);
+  opacity: .7;
+}
+.dc-resize:hover { opacity: 1; }
+.dc-resize.br { right: 0; cursor: nwse-resize; }
+.dc-resize.bl { left: 2px; cursor: nesw-resize; transform: scaleX(-1); }
+.dc-edge { position: absolute; top: 40px; bottom: 18px; width: 6px; cursor: ew-resize; z-index: 2; touch-action: none; }
+.dc-edge.r { right: 0; } .dc-edge.l { left: 0; }
+.dc-edge-b { position: absolute; left: 18px; right: 18px; bottom: 0; height: 6px; cursor: ns-resize; z-index: 2; touch-action: none; }
+/* the all-clear flash */
+.phase.allclear { color: var(--green); text-shadow: 0 0 18px rgba(61,245,160,.8); }
+.msg.diffmsg { padding: 5px 14px; }
+.dm { display: flex; align-items: center; gap: 7px; width: 100%; padding: 4px 6px; background: rgba(92,225,255,.04); border: 1px solid var(--line); font: 11px var(--mono); color: var(--muted); text-align: left; }
+.dm:hover { border-color: var(--line-2); color: var(--text); }
+.dm .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+.dm .who { color: var(--text); white-space: nowrap; max-width: 34%; overflow: hidden; text-overflow: ellipsis; }
+.dm .path { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; color: var(--text); }
+.dm .view { color: var(--cyan); letter-spacing: .12em; }
+.badge { font: 10px var(--mono); color: var(--cyan); margin-left: 6px; font-weight: 400; }
+.changes { display: flex; flex-direction: column; gap: 4px; max-height: 130px; overflow: auto; }
+
 @media (max-width: 1100px) {
   body { overflow: auto; }
   .app {
@@ -230,7 +361,7 @@ header {
   }
   #orb { position: absolute; height: 75vh; }
   .left, .right { max-height: 420px; }
-  .stats { display: none; }
+  .stats, .usage { display: none; }
   .hint { display: none; }
 }
 @media (max-width: 560px) {
@@ -263,11 +394,15 @@ header {
       <span class="stat fail">FAILED<i id="sFail">0</i></span>
       <span class="stat">LIMIT<i id="sLimit">-</i></span>
     </div>
+    <div class="usage" id="usage"></div>
     <div class="right-tools">
       <div class="link" id="link"><span class="led"></span><span id="linkText">CONNECTING</span></div>
       <span id="clock">--:--:--</span>
       <button class="icon-btn" id="voice" title="Read replies aloud" aria-label="Read replies aloud">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>
+      </button>
+      <button class="icon-btn" id="gear" title="Settings" aria-label="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
       </button>
     </div>
   </header>
@@ -281,6 +416,12 @@ header {
   </aside>
 
   <section class="stage" id="stage">
+    <div class="limit-banner" id="limitBanner" role="alert">
+      <div class="lb-title">&#9888; TOKEN RESERVES DEPLETED</div>
+      <div class="lb-sub" id="lbText">Operations on standby until the usage limit resets</div>
+      <div class="lb-count" id="lbCount"></div>
+      <button class="ghost" id="lbResume">Resume now</button>
+    </div>
     <div class="readout">
       <div class="phase"><span id="phaseLabel">STANDING BY</span><span class="tool" id="phaseTool"></span></div>
       <div id="subtitle"></div>
@@ -325,12 +466,60 @@ header {
   <div class="body">
     <div class="kv" id="dKv"></div>
     <div><div class="block-label">PROMPT</div><div class="prompt-box" id="dPrompt"></div></div>
+    <div id="dChanges"></div>
     <div class="block-label">OUTPUT</div>
     <pre class="output-box" id="dOutput"></pre>
     <div class="actions" id="dActions"></div>
   </div>
 </aside>
 
+<aside class="panel drawer settings" id="settings" aria-hidden="true">
+  <h2>SETTINGS<button class="icon-btn" id="sClose" style="margin-left:auto;width:26px;height:26px" aria-label="Close">&#10005;</button></h2>
+  <div class="body">
+    <section class="set-row">
+      <div class="set-head"><h3>PARALLEL AGENTS</h3></div>
+      <div class="stepper">
+        <button class="icon-btn" id="parMinus" aria-label="Fewer">&minus;</button>
+        <span class="num" id="parNum">3</span>
+        <button class="icon-btn" id="parPlus" aria-label="More">+</button>
+        <span class="set-desc">tasks that run at once;<br>the rest wait in the queue</span>
+      </div>
+      <input type="range" id="parRange" min="1" max="16" step="1" value="3" aria-label="Parallel agents">
+      <div class="ticks"><span>1</span><span id="parMax">16</span></div>
+      <div class="set-desc">More agents finish a queue sooner but use your plan's limits faster.</div>
+    </section>
+    <section class="set-row">
+      <div class="set-head"><h3>USAGE LIMIT</h3></div>
+      <button class="switch" id="standbySwitch" role="switch" aria-checked="true">
+        <span class="track"></span><span class="lbl">Standby when tokens run out</span>
+      </button>
+      <div class="set-desc"><b>On:</b> when the 5-hour or weekly limit is reached, queued tasks wait and any task cut off goes back in the queue. All of them resume by themselves when the limit resets.<br><b>Off:</b> tasks keep launching and fail until the limit resets.</div>
+      <div id="standbyBox"></div>
+    </section>
+    <section class="set-row">
+      <div class="set-head"><h3>CODE CHANGES</h3></div>
+      <button class="switch" id="diffSwitch" role="switch" aria-checked="true">
+        <span class="track"></span><span class="lbl">Pop up code changes</span>
+      </button>
+      <div class="set-desc"><b>On:</b> each edit pops up in a small window beside the agent that made it (or beside the orb for the main session), linked to it by a line.<br><b>Off:</b> changes are only listed in Comms and in each task's details; click one to open it.<br>Drag a window's title to move it, and its edges or corner to resize it. New windows open at the last size you set.</div>
+      <div><button class="ghost" id="diffSizeReset">Reset window size</button></div>
+    </section>
+    <section class="set-row">
+      <div class="set-head"><h3>NOTIFICATIONS</h3></div>
+      <button class="switch" id="pingSwitch" role="switch" aria-checked="true">
+        <span class="track"></span><span class="lbl">Ping when all work is done</span>
+      </button>
+      <div class="set-desc">Chimes once the main session and every task have finished: nothing running, nothing queued. A quick reply with no tasks stays quiet. The sound plays on this computer even when the HUD is closed.</div>
+      <div><button class="ghost" id="pingTest">Test ping</button></div>
+    </section>
+    <section class="set-row">
+      <div class="set-head"><h3>ACCOUNT USAGE</h3></div>
+      <div id="meters"></div>
+    </section>
+  </div>
+</aside>
+
+<div id="diffLayer"></div>
 <div id="toasts"></div>
 
 <script>
@@ -353,6 +542,9 @@ const S = {
   messages: [], pending: [],
   selected: null, mode: store.get('mode', 'talk'),
   voiceOn: store.get('voice', false), linked: false, listening: false,
+  limit: { isLimited: false, until: 0, since: 0, kind: '', reason: '' },
+  usage: [], isStandbyOnLimit: true, maxCap: 16, settingsOpen: false,
+  diffs: [], isDiffViewOn: true, isPingOn: true,
 }
 
 const now = () => Date.now() + S.skew
@@ -395,6 +587,7 @@ function handle(m) {
     case 'hello':
       if (m.snapshot) applySnapshot(m.snapshot, true)
       S.messages = m.messages || []
+      S.diffs = m.diffs || []
       S.partial = m.partial || ''
       setPhase(m.phase?.phase || 'idle', m.phase?.tool)
       renderComms(); renderSubtitle()
@@ -411,6 +604,8 @@ function handle(m) {
       renderStreaming(); renderSubtitle()
       break
     case 'msg': onMessage(m); break
+    case 'diff': Diffs.add(m); break
+    case 'ping': allClear(m.isTest); break
     case 'toast': toast(m.text, m.level); break
   }
 }
@@ -424,6 +619,12 @@ function applySnapshot(snap, isFirst) {
   S.tasks = snap.tasks || []
   S.projects = snap.projects || []
   S.maxParallel = snap.maxParallel || 0
+  S.maxCap = snap.maxParallelCap || 16
+  S.isStandbyOnLimit = snap.isStandbyOnLimit !== false
+  S.isDiffViewOn = snap.isDiffViewOn !== false
+  S.isPingOn = snap.isPingOn !== false
+  S.usage = snap.usage || []
+  setLimit(snap.limit || { isLimited: false }, isFirst)
   if (!isFirst) {
     for (const t of S.tasks) {
       const was = before.get(t.id)
@@ -433,7 +634,97 @@ function applySnapshot(snap, isFirst) {
       else if (!was && t.status === 'queued') Orb.ripple()
     }
   }
-  renderTasks(); renderStats(); renderProjects(); renderDrawer()
+  renderTasks(); renderStats(); renderProjects(); renderDrawer(); renderUsage(); renderSettings()
+  Diffs.refresh()
+}
+
+// ---- usage limit --------------------------------------------------------
+function setLimit(limit, isFirst) {
+  const was = !!S.limit.isLimited
+  S.limit = limit
+  document.body.classList.toggle('limited', !!limit.isLimited)
+  Orb.depleted(!!limit.isLimited)
+  if (!isFirst && limit.isLimited && !was) {
+    Voice.say('Warning. Token reserves depleted. ' + (S.isStandbyOnLimit ? 'All operations on standby.' : 'Standby is off.'), true)
+  }
+  if (!isFirst && !limit.isLimited && was) {
+    Orb.restore()
+    Voice.say('Reserves restored. Resuming operations.', true)
+  }
+  $('lbText').textContent = S.isStandbyOnLimit
+    ? 'Operations on standby. Everything resumes when the usage limit resets.'
+    : 'Standby is off: tasks keep launching and will fail until the limit resets.'
+  tickLimit()
+}
+
+const fmtLong = ms => {
+  const s = Math.max(0, Math.round(ms / 1000))
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60
+  return (d ? d + 'd ' : '') + (d || h ? h + 'h ' : '') + String(m).padStart(2, '0') + 'm ' + String(sec).padStart(2, '0') + 's'
+}
+const clockAt = ms => new Date(ms - S.skew).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+
+function tickLimit() {
+  if (!S.limit.isLimited) return
+  const u = S.limit.until
+  $('lbCount').textContent = u ? 'RESUMES IN ' + fmtLong(u - now()) : 'CHECKING FOR RESET...'
+  $('lbCount').title = u ? 'Resets ' + clockAt(u) : 'The reset time is unknown; checking every few minutes'
+}
+
+const meterClass = p => p >= 100 ? 'full' : p >= 80 ? 'warn' : ''
+const SHORT = { five_hour: '5H', seven_day: '7D', seven_day_opus: '7D OPUS', spend_limit: 'SPEND' }
+
+function renderUsage() {
+  $('usage').innerHTML = S.usage.map(w => `
+    <span class="u ${meterClass(w.percent)}" title="${esc(w.name)} limit: ${w.percent}% used${w.resetsAt ? ', resets ' + esc(clockAt(w.resetsAt)) : ''}">
+      ${esc(SHORT[w.kind] || w.name.toUpperCase())}<span class="bar-o"><i style="width:${Math.min(100, w.percent)}%"></i></span><b>${Math.round(w.percent)}%</b>
+    </span>`).join('')
+}
+
+// ---- settings drawer ----------------------------------------------------
+let parTimer = 0
+let parHoldUntil = 0 // ignore snapshots briefly while a change is in flight
+function setParallel(n, isNow) {
+  n = Math.max(1, Math.min(S.maxCap, Math.round(n)))
+  S.maxParallel = n
+  parHoldUntil = Date.now() + 1500
+  $('parNum').textContent = n
+  $('parRange').value = n
+  renderStats()
+  clearTimeout(parTimer)
+  parTimer = setTimeout(() => command({ type: 'settings', maxParallel: n }), isNow ? 0 : 300)
+}
+
+function renderSettings() {
+  if (Date.now() > parHoldUntil) {
+    $('parRange').max = S.maxCap
+    $('parMax').textContent = S.maxCap
+    $('parRange').value = S.maxParallel || 1
+    $('parNum').textContent = S.maxParallel || '-'
+  }
+  const psw = $('pingSwitch')
+  psw.classList.toggle('on', S.isPingOn)
+  psw.setAttribute('aria-checked', String(S.isPingOn))
+  const dsw = $('diffSwitch')
+  dsw.classList.toggle('on', S.isDiffViewOn)
+  dsw.setAttribute('aria-checked', String(S.isDiffViewOn))
+  const sw = $('standbySwitch')
+  sw.classList.toggle('on', S.isStandbyOnLimit)
+  sw.setAttribute('aria-checked', String(S.isStandbyOnLimit))
+  $('standbyBox').innerHTML = S.limit.isLimited
+    ? `<div class="standby-box"><b>${S.isStandbyOnLimit ? 'STANDBY ACTIVE' : 'LIMIT REACHED'}</b><span>${S.limit.until ? 'Resets ' + esc(clockAt(S.limit.until)) : 'Reset time unknown; checking every few minutes.'}</span><span>${esc(S.limit.reason || '')}</span><button class="ghost" data-resume>Resume now</button></div>`
+    : ''
+  $('meters').innerHTML = S.usage.length
+    ? S.usage.map(w => `<div class="meter ${meterClass(w.percent)}"><span>${esc(w.name.toUpperCase())}</span><span class="bar-o"><i style="width:${Math.min(100, w.percent)}%"></i></span><span>${w.percent}%</span>${w.resetsAt ? `<small>resets ${esc(clockAt(w.resetsAt))}</small>` : ''}</div>`).join('')
+    : '<div class="set-desc">No reading yet. Usage shows after the session makes a request (subscription plans only).</div>'
+}
+
+function openSettings(open) {
+  S.settingsOpen = open
+  $('settings').classList.toggle('open', open)
+  $('settings').setAttribute('aria-hidden', String(!open))
+  $('gear').classList.toggle('on', open)
+  if (open) { select(null); renderSettings() }
 }
 
 const ORDER = { running: 0, queued: 1, failed: 2, done: 3, killed: 4 }
@@ -443,7 +734,8 @@ function fmtDur(ms) {
   const m = Math.floor(s / 60)
   return m < 60 ? m + 'm' + String(s % 60).padStart(2, '0') + 's' : Math.floor(m / 60) + 'h' + (m % 60) + 'm'
 }
-const elapsed = t => t.startedAt ? fmtDur((t.endedAt || now()) - t.startedAt) : 'waiting'
+const standby = t => t.status === 'queued' && ((S.limit.isLimited && S.isStandbyOnLimit) || t.interruptions > 0)
+const elapsed = t => t.startedAt ? fmtDur((t.endedAt || now()) - t.startedAt) : standby(t) ? 'standby' : 'waiting'
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
@@ -460,10 +752,10 @@ function renderTasks() {
   }
   $('tasks').innerHTML = list.map(t => `
     <button class="task ${t.id === S.selected ? 'sel' : ''}" data-id="${esc(t.id)}">
-      <span class="dot ${t.status}"></span>
-      <span class="t">${esc(t.title)}</span>
+      <span class="dot ${standby(t) ? 'standby' : t.status}"></span>
+      <span class="t">${esc(t.title)}${diffCount(t.id) ? `<span class="badge">&#9998;${diffCount(t.id)}</span>` : ''}</span>
       <span class="el" data-el="${esc(t.id)}">${elapsed(t)}</span>
-      <span class="m">${esc(t.project)} · ${esc(t.backend)}${t.model ? ' · ' + esc(t.model) : ''} · ${t.status}</span>
+      <span class="m">${esc(t.project)} · ${esc(t.backend)}${t.model ? ' · ' + esc(t.model) : ''} · ${standby(t) ? 'standby' : t.status}</span>
     </button>`).join('')
 }
 
@@ -474,6 +766,7 @@ function tickElapsed() {
   }
   const d = new Date()
   $('clock').textContent = d.toTimeString().slice(0, 8)
+  tickLimit()
 }
 
 function renderStats() {
@@ -500,6 +793,7 @@ function renderProjects() {
 
 // ---- drawer ------------------------------------------------------------
 function select(id) {
+  if (id && S.settingsOpen) openSettings(false)
   S.selected = id
   renderTasks(); renderDrawer()
 }
@@ -520,6 +814,11 @@ function renderDrawer() {
     <span>BACKEND</span><span>${esc(t.backend)}${t.model ? ' · ' + esc(t.model) : ''}</span>
     <span>ELAPSED</span><span>${elapsed(t)}</span>`
   $('dPrompt').textContent = t.prompt
+  const mine = S.diffs.filter(d => d.taskId === t.id)
+  $('dChanges').innerHTML = mine.length
+    ? `<div class="block-label">CHANGES (${mine.length})</div><div class="changes">${mine.slice().reverse().map(d =>
+        `<button class="dm" data-diff="${esc(d.id)}" title="${esc(d.file)}"><span class="path">${esc(shortPath(d.file))}</span><span class="add">+${d.added}</span><span class="del">&minus;${d.removed}</span><span class="view">VIEW</span></button>`).join('')}</div>`
+    : ''
   const out = $('dOutput')
   const atEnd = out.scrollHeight - out.scrollTop - out.clientHeight < 30
   out.textContent = t.output || '(no output yet)'
@@ -565,17 +864,32 @@ function md(text) {
 const hhmm = at => at ? new Date(at - S.skew).toTimeString().slice(0, 5) : ''
 
 function msgHtml(m, extra = '') {
+  if (m.role === 'diff') {
+    const o = Diffs.owner(Diffs.ownerKey(m))
+    return `<div class="msg diffmsg ${extra}"><button class="dm" data-diff="${esc(m.id)}" title="${esc(m.file)}">
+      <span class="dot" style="background:${o.color}"></span><span class="who">${esc(o.name)}</span>
+      <span class="path">${esc(shortPath(m.file))}</span><span class="add">+${m.added}</span><span class="del">&minus;${m.removed}</span><span class="view">VIEW</span></button></div>`
+  }
   const who = m.role === 'assistant' ? 'ORCHESTRATOR' : m.role === 'user' ? (m.source === 'hud' ? 'YOU · HUD' : 'YOU · TERMINAL') : 'SYSTEM'
   if (m.role === 'system') {
-    return `<div class="msg system ${esc(m.status || '')}"><div class="body">◆ ${esc(m.text)}</div></div>`
+    return `<div class="msg system ${esc(m.status || '')} ${extra}"><div class="body">◆ ${esc(m.text)}</div></div>`
   }
   return `<div class="msg ${m.role} ${extra}"><div class="who"><span>${who}</span><time>${hhmm(m.at)}</time></div><div class="body">${md(m.text)}</div></div>`
 }
 
+const seenMsgs = new Set()
 function renderComms() {
   const el = $('comms')
   const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 60
-  let html = S.messages.map(m => msgHtml(m)).join('')
+  const items = [...S.messages, ...S.diffs.map(d => ({ ...d, role: 'diff' }))]
+    .sort((a, b) => (a.at || 0) - (b.at || 0))
+  // Only entries not drawn before fade in; the rest stay put.
+  let html = items.map(m => {
+    const key = (m.id || '') + '|' + (m.at || 0) + '|' + (m.role || '') + '|' + String(m.text || '').length
+    const isFresh = !seenMsgs.has(key)
+    seenMsgs.add(key)
+    return msgHtml(m, isFresh ? 'fresh' : '')
+  }).join('')
   html += S.pending.map(text => msgHtml({ role: 'user', source: 'hud', text }, 'pending')).join('')
   if (S.partial) html += `<div class="msg assistant" id="streaming"><div class="who"><span>ORCHESTRATOR</span></div><div class="body caret">${md(S.partial)}</div></div>`
   if (!html) html = '<div class="empty">Say hello.<br><br>Messages here go to your Claude Code session, which can dispatch work across your projects. Replies stream back here.</div>'
@@ -606,6 +920,17 @@ function renderSubtitle() {
   el.style.opacity = text ? 1 : 0
 }
 
+// ---- all work done ------------------------------------------------------
+let allClearTimer = 0
+function allClear(isTest) {
+  Orb.allClear()
+  const el = $('phaseLabel')
+  el.parentElement.classList.add('allclear')
+  el.textContent = isTest ? 'PING TEST' : 'ALL OPERATIONS COMPLETE'
+  clearTimeout(allClearTimer)
+  allClearTimer = setTimeout(() => { el.parentElement.classList.remove('allclear'); renderPhase() }, 4500)
+}
+
 // ---- phase ------------------------------------------------------------
 function setPhase(p, tool) {
   S.phase = p
@@ -621,9 +946,11 @@ function prettyTool(name) {
 }
 
 function renderPhase() {
+  if ($('phaseLabel').parentElement.classList.contains('allclear')) return
   const running = S.tasks.filter(t => t.status === 'running').length
   let label
   if (!S.linked) label = 'OFFLINE'
+  else if (S.limit.isLimited) label = S.isStandbyOnLimit ? 'RESERVES DEPLETED · STANDBY' : 'RESERVES DEPLETED'
   else if (S.listening) label = 'LISTENING'
   else if (S.phase === 'thinking') label = 'PROCESSING'
   else if (S.phase === 'speaking') label = 'TRANSMITTING'
@@ -789,7 +1116,10 @@ const Orb = (() => {
     tool:      { rgb: [255, 181, 71],  energy: .65 },
     listening: { rgb: [110, 255, 205], energy: .4 },
     offline:   { rgb: [110, 125, 140], energy: .05 },
+    depleted:  { rgb: [255, 52, 72],   energy: .02 },
   }
+  // 1 = full power; dims toward 0.3 while the usage limit is reached.
+  let dim = 1, dimTarget = 1, isDepleted = false, flicker = 1
   const STATUS_RGB = { running: [255, 181, 71], queued: [113, 133, 155], done: [61, 245, 160], failed: [255, 77, 109], killed: [80, 92, 105] }
 
   function build() {
@@ -857,7 +1187,10 @@ const Orb = (() => {
     last = nowMs
     t += dt * (reduce ? .35 : 1)
 
-    const ph = PHASE[S.linked ? mode : 'offline'] || PHASE.idle
+    const ph = !S.linked ? PHASE.offline : isDepleted ? PHASE.depleted : PHASE[mode] || PHASE.idle
+    dim += (dimTarget - dim) * Math.min(1, dt * .9)
+    // A failing power core: brief random sputters while depleted.
+    flicker = isDepleted ? (Math.random() < .035 ? .25 + Math.random() * .4 : flicker + (1 - flicker) * .2) : 1
     const running = S.tasks.filter(x => x.status === 'running').length
     energyTarget = ph.energy + Math.min(.25, running * .05) + (Voice.isSpeaking() ? .2 : 0)
     energy += (energyTarget - energy) * Math.min(1, dt * 2.5)
@@ -867,7 +1200,7 @@ const Orb = (() => {
     if (flash && nowMs < flash.until) target = mix(target, flash.rgb, .75)
     const c = mix(col, target, Math.min(1, dt * 3))
     col[0] = c[0]; col[1] = c[1]; col[2] = c[2]
-    rotY += dt * (.1 + energy * .45)
+    rotY += dt * (.1 + energy * .45) * (.25 + .75 * dim)
     const tilt = .38 + Math.sin(t * .13) * .07
 
     ctx.clearRect(0, 0, W, H)
@@ -885,7 +1218,7 @@ const Orb = (() => {
 
     // outer halo
     const halo = ctx.createRadialGradient(cx, cy, R * .2, cx, cy, R * 2.1)
-    halo.addColorStop(0, rgba(col, .16 + energy * .12 + voiceLevel * .1))
+    halo.addColorStop(0, rgba(col, (.16 + energy * .12 + voiceLevel * .1) * (.5 + .5 * dim)))
     halo.addColorStop(.45, rgba(col, .05))
     halo.addColorStop(1, rgba(col, 0))
     ctx.fillStyle = halo
@@ -979,7 +1312,7 @@ const Orb = (() => {
       if (mode === 'thinking' || mode === 'tool') a += Math.exp(-((p.y - band) ** 2) * 30) * .7
       a *= .75 + .25 * Math.sin(t * 2 + p.s)
       const size = (.7 + dep * 1.5) * (1 + voiceLevel * .5)
-      ctx.fillStyle = rgba(col, Math.min(1, a))
+      ctx.fillStyle = rgba(col, Math.min(1, a) * dim * flicker)
       ctx.fillRect(s.x - size / 2, s.y - size / 2, size, size)
     }
 
@@ -1006,8 +1339,9 @@ const Orb = (() => {
     // core
     const pulse = 1 + Math.sin(t * (1.5 + energy * 4)) * .06 + voiceLevel * .25
     const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * .62 * pulse)
-    core.addColorStop(0, rgba([255, 255, 255], .55 + voiceLevel * .3))
-    core.addColorStop(.12, rgba(col, .5 + energy * .3))
+    const cdim = dim * dim * flicker
+    core.addColorStop(0, rgba(isDepleted ? [255, 120, 130] : [255, 255, 255], (.55 + voiceLevel * .3) * cdim))
+    core.addColorStop(.12, rgba(col, (.5 + energy * .3) * cdim))
     core.addColorStop(.45, rgba(col, .12))
     core.addColorStop(1, rgba(col, 0))
     ctx.fillStyle = core
@@ -1018,6 +1352,7 @@ const Orb = (() => {
       const r = ripples[i]
       const k = (nowMs - r.born) / 1600
       if (k >= 1) { ripples.splice(i, 1); continue }
+      if (k < 0) continue
       ctx.strokeStyle = rgba(r.rgb || col, (1 - k) * .6)
       ctx.lineWidth = 2 * (1 - k) + .5
       ctx.beginPath(); ctx.arc(cx, cy, R * (1 + k * 1.3), 0, 6.283); ctx.stroke()
@@ -1040,6 +1375,30 @@ const Orb = (() => {
 
     for (const m of moons) if (!m.behind) drawMoon(m)
 
+    // Lines from each change window to the agent that made it.
+    const cr = cv.getBoundingClientRect()
+    for (const a of Diffs.anchors()) {
+      const moon = a.taskId ? moons.find(m => m.id === a.taskId) : null
+      if (a.taskId && !moon) continue // the task has left its orbit
+      const tx = moon ? moon.x : cx, ty = moon ? moon.y : cy
+      const ax = a.x - cr.left, ay = a.y - cr.top
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = a.color
+      ctx.globalAlpha = .55
+      ctx.lineWidth = 1.2
+      ctx.setLineDash([5, 5])
+      ctx.lineDashOffset = -t * 30
+      const mx = (ax + tx) / 2
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.bezierCurveTo(mx, ay, mx, ty, tx, ty); ctx.stroke()
+      ctx.setLineDash([])
+      ctx.globalAlpha = 1
+      ctx.fillStyle = a.color
+      ctx.beginPath(); ctx.arc(ax, ay, 2.5, 0, 6.283); ctx.fill()
+      ctx.strokeStyle = a.color
+      ctx.beginPath(); ctx.arc(tx, ty, moon ? 9 + Math.sin(t * 5) * 1.5 : R * .2, 0, 6.283); ctx.stroke()
+      ctx.globalCompositeOperation = 'lighter'
+    }
+
     // bursts from finished tasks
     for (let i = bursts.length - 1; i >= 0; i--) {
       const p = bursts[i]
@@ -1050,7 +1409,9 @@ const Orb = (() => {
       ctx.fillRect(p.x - 1.2, p.y - 1.2, 2.4, 2.4)
     }
 
+    ctx.globalAlpha = .4 + .6 * dim
     drawHud(nowMs, running)
+    ctx.globalAlpha = 1
     for (const m of moons) labelMoon(m)
 
     ctx.globalCompositeOperation = 'source-over'
@@ -1115,7 +1476,10 @@ const Orb = (() => {
     txt(`AGENTS ${String(running).padStart(2, '0')}/${String(S.maxParallel || 0).padStart(2, '0')}`, -.62, R * 1.82, 'left')
     txt(`QUEUE ${String(queued).padStart(2, '0')}`, -.5, R * 1.86, 'left')
     txt('SYS.ORCH // CORE', -2.52, R * 1.82, 'right')
-    txt(`E ${(energy * 100).toFixed(0).padStart(3, '0')}%`, -2.64, R * 1.86, 'right')
+    txt(isDepleted ? 'RESERVES 000%' : `E ${(energy * 100).toFixed(0).padStart(3, '0')}%`, -2.64, R * 1.86, 'right')
+    const w5 = S.usage.find(w => w.kind === 'five_hour'), w7 = S.usage.find(w => w.kind === 'seven_day')
+    if (w5) txt(`USE 5H ${String(Math.round(w5.percent)).padStart(3, '0')}%`, 2.62, R * 1.84, 'right')
+    if (w7) txt(`USE 7D ${String(Math.round(w7.percent)).padStart(3, '0')}%`, 2.5, R * 1.88, 'right')
     ctx.globalCompositeOperation = 'lighter'
   }
 
@@ -1149,6 +1513,23 @@ const Orb = (() => {
   return {
     phase(p) { mode = p; if (p === 'tool') ripples.push({ born: performance.now(), rgb: [255, 181, 71] }) },
     voice(v) { voiceLevel = Math.max(voiceLevel, v) },
+    depleted(on) { isDepleted = on; dimTarget = on ? .3 : 1 },
+    allClear() {
+      flash = { rgb: [61, 245, 160], until: performance.now() + 1400 }
+      for (let i = 0; i < 4; i++) ripples.push({ born: performance.now() + i * 260, rgb: [61, 245, 160] })
+      voiceLevel = 1
+    },
+    // Where a task's moon is now, in page coordinates; the core when it has none.
+    anchorFor(taskId) {
+      const r = cv.getBoundingClientRect()
+      const m = taskId ? moons.find(x => x.id === taskId) : null
+      return m ? { x: m.x + r.left, y: m.y + r.top, isMoon: true } : { x: cx + r.left, y: cy + r.top, isMoon: false }
+    },
+    restore() {
+      isDepleted = false; dimTarget = 1
+      flash = { rgb: [200, 250, 255], until: performance.now() + 1200 }
+      for (let i = 0; i < 3; i++) ripples.push({ born: performance.now() + i * 220, rgb: [150, 240, 255] })
+    },
     ripple() { ripples.push({ born: performance.now() }) },
     launch(id) { beams.push({ id, born: performance.now() }); ripples.push({ born: performance.now(), rgb: [255, 181, 71] }) },
     finish(id, status) {
@@ -1163,6 +1544,259 @@ const Orb = (() => {
       ripples.push({ born: performance.now(), rgb })
     },
   }
+})()
+
+// ======================================================================
+// Code change windows
+// ======================================================================
+function shortPath(p) {
+  const parts = String(p).split(/[\\/]/).filter(Boolean)
+  return parts.slice(-3).join('/')
+}
+function diffCount(taskId) { return S.diffs.filter(d => d.taskId === taskId).length }
+
+const Diffs = (() => {
+  const layer = $('diffLayer')
+  const cards = new Map() // owner key -> card
+  const muted = new Set()
+  // The size the person last gave a window; new windows open at it.
+  let saved = store.get('diffSize', null)
+  const MIN_W = 260, MIN_H = 150
+  const STATUS_HEX = { running: '#ffb547', queued: '#71859b', done: '#3df5a0', failed: '#ff4d6d', killed: '#71859b' }
+
+  const ownerKey = d => d.taskId ? 't:' + d.taskId : d.agentId ? 'a:' + d.agentId : 'main'
+  function owner(key) {
+    if (key === 'main') return { name: 'Orchestrator', color: getComputedStyle(document.body).getPropertyValue('--cyan').trim() || '#5ce1ff' }
+    if (key.startsWith('t:')) {
+      const t = S.tasks.find(x => x.id === key.slice(2))
+      return { name: t ? t.title : 'Task ' + key.slice(2), color: STATUS_HEX[t?.status] || '#ffb547', taskId: key.slice(2), task: t }
+    }
+    return { name: 'Subagent ' + key.slice(2, 8), color: '#8ea6ff' }
+  }
+  const listFor = key => S.diffs.filter(d => ownerKey(d) === key)
+
+  function add(d) {
+    S.diffs.push(d)
+    if (S.diffs.length > 150) S.diffs.shift()
+    const key = ownerKey(d)
+    const card = cards.get(key)
+    if (card) { card.idx = listFor(key).length - 1; card.closeAt = 0; render(card, true) }
+    else if (S.isDiffViewOn && !muted.has(key)) open(key)
+    renderComms(); renderTasks(); if (S.selected) renderDrawer()
+  }
+
+  function openDiff(id) {
+    const d = S.diffs.find(x => x.id === id)
+    if (!d) return
+    const key = ownerKey(d)
+    open(key)
+    const card = cards.get(key)
+    card.idx = listFor(key).findIndex(x => x.id === id)
+    render(card, true)
+  }
+
+  function open(key) {
+    let card = cards.get(key)
+    if (!card) {
+      const el = document.createElement('div')
+      el.className = 'diff-card'
+      el.setAttribute('role', 'dialog')
+      layer.appendChild(el)
+      card = { key, el, idx: listFor(key).length - 1, side: 'left', closeAt: 0 }
+      cards.set(key, card)
+      el.addEventListener('pointerdown', e => startDrag(card, e))
+      el.addEventListener('click', e => {
+        const b = e.target.closest('[data-act]')
+        if (!b) return
+        const act = b.dataset.act
+        if (act === 'close') close(key)
+        else if (act === 'mute') { muted.add(key); close(key); toast('Changes from this agent stay in Comms only.') }
+        else if (act === 'prev') { card.idx = Math.max(0, card.idx - 1); render(card) }
+        else if (act === 'next') { card.idx = Math.min(listFor(key).length - 1, card.idx + 1); render(card) }
+        else if (act === 'task' && owner(key).taskId) select(owner(key).taskId)
+      })
+      render(card)
+      place(card)
+    } else render(card, true)
+  }
+
+  function close(key) {
+    const card = cards.get(key)
+    if (!card) return
+    card.el.remove()
+    cards.delete(key)
+  }
+  const closeAll = () => [...cards.keys()].forEach(close)
+
+  function hunksHtml(d) {
+    let html = ''
+    for (const h of d.hunks) {
+      let o = h.oldStart, n = h.newStart
+      if (o || n) html += `<div class="dl h">@@ -${o} +${n} @@</div>`
+      for (const line of h.lines) {
+        const c = line[0], text = esc(line.slice(1))
+        if (c === '+') { html += `<div class="dl a"><span class="n"></span><span class="n">${n || ''}</span><span class="t">+${text}</span></div>`; if (n) n++ }
+        else if (c === '-') { html += `<div class="dl d"><span class="n">${o || ''}</span><span class="n"></span><span class="t">-${text}</span></div>`; if (o) o++ }
+        else if (c === '\\') html += `<div class="dl h">${esc(line)}</div>`
+        else { html += `<div class="dl"><span class="n">${o || ''}</span><span class="n">${n || ''}</span><span class="t"> ${text}</span></div>`; if (o) o++; if (n) n++ }
+      }
+    }
+    if (d.isTruncated) html += '<div class="dl h">… more lines not shown</div>'
+    return html
+  }
+
+  function render(card, isFresh) {
+    const list = listFor(card.key)
+    if (!list.length) return close(card.key)
+    card.idx = Math.max(0, Math.min(list.length - 1, card.idx))
+    const d = list[card.idx]
+    const o = owner(card.key)
+    card.el.style.setProperty('--agent', o.color)
+    card.el.setAttribute('aria-label', 'Code changes by ' + o.name)
+    const status = o.task ? ` · ${o.task.status}` : ''
+    card.el.innerHTML = `
+      <div class="dc-head">
+        <span class="dot"></span>
+        <span class="dc-who grip" title="${esc(o.name)} (drag to move)">${esc(o.name)}<span style="opacity:.55;letter-spacing:.08em">${esc(status)}</span></span>
+        ${o.taskId ? '<button class="dc-btn" data-act="task" title="Open this task">TASK</button>' : ''}
+        <button class="dc-btn x" data-act="close" title="Close these changes" aria-label="Close these changes">&#10005;</button>
+      </div>
+      <div class="dc-file"><span class="op">${esc(d.op)}</span><span class="path" title="${esc(d.file)}">${esc(shortPath(d.file))}</span><span class="add">+${d.added}</span><span class="del">&minus;${d.removed}</span></div>
+      <div class="dc-body">${hunksHtml(d)}</div>
+      <div class="dc-foot">
+        <button class="dc-btn" data-act="prev" ${card.idx === 0 ? 'disabled' : ''} aria-label="Older change">&lsaquo;</button>
+        <span>${card.idx + 1} / ${list.length}</span>
+        <button class="dc-btn" data-act="next" ${card.idx === list.length - 1 ? 'disabled' : ''} aria-label="Newer change">&rsaquo;</button>
+        <span class="grow"></span>
+        <button class="dc-btn" data-act="mute" title="Stop popping up changes from this agent">MUTE</button>
+      </div>
+      <div class="dc-edge l" data-rs="l"></div><div class="dc-edge r" data-rs="r"></div><div class="dc-edge-b" data-rs="b"></div>
+      <div class="dc-resize ${card.side === 'right' ? 'bl' : 'br'}" data-rs="${card.side === 'right' ? 'bl' : 'br'}" title="Drag to resize (double-click: default size)"></div>`
+    if (isFresh) {
+      card.el.classList.remove('flash'); void card.el.offsetWidth; card.el.classList.add('flash')
+    }
+  }
+
+  // Beside its agent: on the agent's side of the stage, level with it, clear of the others.
+  function place(card) {
+    const st = $('stage').getBoundingClientRect()
+    const narrow = innerWidth < 760
+    const w = narrow ? Math.min(innerWidth - 32, 420)
+      : saved ? Math.min(saved.w, innerWidth - 32) : Math.min(360, Math.max(260, st.width * .42))
+    card.el.style.width = w + 'px'
+    if (saved && !narrow) {
+      card.el.style.height = Math.min(saved.h, innerHeight - 32) + 'px'
+      card.el.classList.add('sized')
+    }
+    const h = card.el.offsetHeight || 300
+    const a = Orb.anchorFor(owner(card.key).taskId)
+    card.side = a.x < st.left + st.width / 2 ? 'left' : 'right'
+    let left = narrow ? 16 : card.side === 'left' ? st.left + 6 : st.right - w - 6
+    let top = Math.max(st.top + 6, Math.min(a.y - 40, st.bottom - h - 6))
+    const others = [...cards.values()].filter(c => c !== card && (narrow || c.side === card.side))
+      .map(c => c.el.getBoundingClientRect()).sort((x, y) => x.top - y.top)
+    for (const r of others) {
+      if (top < r.bottom + 8 && top + h > r.top - 8) top = r.bottom + 8
+    }
+    if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8)
+    card.el.style.left = left + 'px'
+    card.el.style.top = top + 'px'
+    render(card) // the resize corner sits on the side away from the agent
+  }
+
+  // Move by the title, resize by an edge or the corner.
+  function startDrag(card, e) {
+    const rs = e.target.closest('[data-rs]')?.dataset.rs
+    const isMove = !rs && e.target.closest('.grip')
+    if (!rs && !isMove) return
+    if (e.button !== 0) return
+    e.preventDefault()
+    const el = card.el
+    const r0 = el.getBoundingClientRect()
+    const x0 = e.clientX, y0 = e.clientY
+    el.classList.add('dragging')
+    try { el.setPointerCapture(e.pointerId) } catch {} // keeps the drag through fast moves
+    const move = ev => {
+      const dx = ev.clientX - x0, dy = ev.clientY - y0
+      if (isMove) {
+        const left = Math.max(0, Math.min(innerWidth - 60, r0.left + dx))
+        const top = Math.max(0, Math.min(innerHeight - 40, r0.top + dy))
+        el.style.left = left + 'px'
+        el.style.top = top + 'px'
+        const st = $('stage').getBoundingClientRect()
+        card.side = left + r0.width / 2 < st.left + st.width / 2 ? 'left' : 'right'
+        return
+      }
+      let { left, width, height } = { left: r0.left, width: r0.width, height: r0.height }
+      if (rs === 'r' || rs === 'br') width = r0.width + dx
+      if (rs === 'l' || rs === 'bl') { width = r0.width - dx; left = r0.left + dx }
+      if (rs === 'b' || rs === 'br' || rs === 'bl') height = r0.height + dy
+      width = Math.max(MIN_W, Math.min(innerWidth - 16, width))
+      height = Math.max(MIN_H, Math.min(innerHeight - r0.top - 8, height))
+      if (rs === 'l' || rs === 'bl') left = r0.right - width
+      el.style.left = Math.max(0, left) + 'px'
+      el.style.width = width + 'px'
+      el.style.height = height + 'px'
+      el.classList.add('sized')
+    }
+    const up = () => {
+      el.classList.remove('dragging')
+      removeEventListener('pointermove', move)
+      removeEventListener('pointerup', up)
+      card.closeAt = 0 // touched: keep it
+      if (rs) {
+        const r = el.getBoundingClientRect()
+        saved = { w: Math.round(r.width), h: Math.round(r.height) }
+        store.set('diffSize', saved)
+      }
+    }
+    addEventListener('pointermove', move)
+    addEventListener('pointerup', up)
+  }
+
+  function resetSize() {
+    saved = null
+    store.set('diffSize', null)
+    for (const c of cards.values()) {
+      c.el.style.height = ''
+      c.el.classList.remove('sized')
+      place(c)
+    }
+  }
+
+  // For the orb's connector lines: where each card's line starts.
+  function anchors() {
+    const out = []
+    for (const c of cards.values()) {
+      const r = c.el.getBoundingClientRect()
+      const o = owner(c.key)
+      out.push({ x: c.side === 'left' ? r.right : r.left, y: r.top + 16, color: o.color, taskId: o.taskId })
+    }
+    return out
+  }
+
+  // On each snapshot: recolor, and let windows of finished tasks go after a while.
+  function refresh() {
+    for (const c of cards.values()) {
+      const o = owner(c.key)
+      const live = !o.task || o.task.status === 'running' || o.task.status === 'queued'
+      if (!live && !c.closeAt) c.closeAt = Date.now() + 20000
+      c.el.style.setProperty('--agent', o.color)
+    }
+  }
+  setInterval(() => {
+    for (const c of [...cards.values()]) {
+      if (c.closeAt && Date.now() > c.closeAt && !c.el.matches(':hover')) close(c.key)
+    }
+  }, 1000)
+  addEventListener('resize', () => cards.forEach(place))
+
+  layer.addEventListener('dblclick', e => {
+    if (!e.target.closest('.dc-resize')) return
+    resetSize()
+  })
+
+  return { add, open, openDiff, close, closeAll, anchors, refresh, owner, ownerKey, resetSize }
 })()
 
 // ======================================================================
@@ -1181,6 +1815,36 @@ $('dActions').addEventListener('click', e => {
   if (act === 'remove') select(null)
 })
 $('clearBtn').onclick = () => command({ type: 'clear' })
+$('gear').onclick = () => openSettings(!S.settingsOpen)
+$('sClose').onclick = () => openSettings(false)
+$('parMinus').onclick = () => setParallel((S.maxParallel || 1) - 1, true)
+$('parPlus').onclick = () => setParallel((S.maxParallel || 0) + 1, true)
+$('parRange').addEventListener('input', e => setParallel(Number(e.target.value), false))
+$('standbySwitch').onclick = () => {
+  S.isStandbyOnLimit = !S.isStandbyOnLimit
+  renderSettings(); renderTasks(); renderPhase()
+  command({ type: 'settings', isStandbyOnLimit: S.isStandbyOnLimit })
+}
+$('pingSwitch').onclick = () => {
+  S.isPingOn = !S.isPingOn
+  renderSettings()
+  command({ type: 'settings', isPingOn: S.isPingOn })
+}
+$('pingTest').onclick = () => command({ type: 'ping' })
+$('diffSizeReset').onclick = () => { Diffs.resetSize(); toast('Diff windows back to the default size.') }
+$('diffSwitch').onclick = () => {
+  S.isDiffViewOn = !S.isDiffViewOn
+  renderSettings()
+  command({ type: 'settings', isDiffViewOn: S.isDiffViewOn })
+}
+// Any "VIEW" link: Comms, the task drawer.
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-diff]')
+  if (b) Diffs.openDiff(b.dataset.diff)
+})
+const resume = () => command({ type: 'resume' })
+$('lbResume').onclick = resume
+$('standbyBox').addEventListener('click', e => { if (e.target.closest('[data-resume]')) resume() })
 $('modeTalk').onclick = () => setMode('talk')
 $('modeDispatch').onclick = () => setMode('dispatch')
 $('send').onclick = send
@@ -1198,7 +1862,12 @@ input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() }
 })
 addEventListener('keydown', e => {
-  if (e.key === 'Escape') { if (S.selected) select(null); Voice.stop() }
+  if (e.key === 'Escape') {
+    if (S.selected) select(null)
+    else if (S.settingsOpen) openSettings(false)
+    else Diffs.closeAll()
+    Voice.stop()
+  }
   if (e.key === '/' && document.activeElement !== input && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) {
     e.preventDefault(); input.focus()
   }

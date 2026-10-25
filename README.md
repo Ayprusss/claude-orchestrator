@@ -27,12 +27,24 @@ Run `/orchestrator` to open the pane.
 - **Projects**: register each project once (a name and an absolute folder path).
 - **New**: pick a project, backend, and prompt, then Queue. Batch mode makes one task per line.
 - **Sessions**: watch tasks queue, run, and finish; read output, kill, retry, or open an agent's transcript.
-- **Settings**: max parallel sessions, the `claude` binary, and flags for headless runs.
+- **Settings**: max parallel sessions (up to 16), usage-limit standby, the `claude` binary, and flags for headless runs.
 - **Docs**: the full guide.
 
 ### HUD
 
 Run `/orchestrator-hud` (or press **HUD** in the pane) to open a browser dashboard: an animated orb you can talk to, by text or voice, with running tasks orbiting it, a live task list, and the main conversation streamed in. It needs Node.js 18+ on PATH. It runs on `127.0.0.1` only, and each request needs a per-install token. `/orchestrator-hud stop` shuts it down. The **HUD** page of the Docs tab has details.
+
+### Code changes
+
+The HUD shows each edit as a diff. A small window pops up beside the agent that made it, linked to it by a line, and Comms lists every change. Drag a window's edges or corner to resize it, and its title to move it. Close it with ✕, or turn pop-ups off in Settings. Edits by `process` tasks are not shown.
+
+### All-done ping
+
+When the main session and every task have finished, the orchestrator plays a chime (`assets/ping.wav`) on your machine, even with the HUD closed. Turn it off in Settings.
+
+### Usage limits
+
+By default, when your plan's 5-hour or weekly limit is reached, the orchestrator goes on standby: queued tasks wait, tasks cut off by the limit go back in the queue, and everything resumes by itself when the limit resets. Turn it off in Settings. The HUD turns red and dims while it waits.
 
 Two backends: **agent** (a subagent of the current session) and **process** (a separate headless `claude -p` run, which needs the `claude` CLI on the machine running the session). The main session also gets `dispatch`, `status` and `projects` tools, so you can ask it to delegate work.
 

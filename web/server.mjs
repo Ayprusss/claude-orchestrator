@@ -32,7 +32,7 @@ if (!/^[A-Za-z0-9]{16,}$/.test(TOKEN)) {
 }
 
 // What a newly connected browser is sent first.
-const state = { snapshot: null, phase: { type: 'phase', phase: 'idle' }, messages: [], partial: '' }
+const state = { snapshot: null, phase: { type: 'phase', phase: 'idle' }, messages: [], diffs: [], partial: '' }
 const clients = new Set()
 let port = WANT_PORT
 let lastHeard = Date.now()
@@ -53,6 +53,10 @@ function remember(event) {
       break
     case 'delta':
       state.partial = (state.partial + event.text).slice(-4000)
+      break
+    case 'diff':
+      state.diffs.push(event)
+      if (state.diffs.length > 60) state.diffs.shift()
       break
     case 'msg':
       state.messages.push(event)
@@ -102,7 +106,7 @@ function openBrowser(url) {
   }
 }
 
-const COMMANDS = new Set(['chat', 'dispatch', 'kill', 'retry', 'remove', 'clear'])
+const COMMANDS = new Set(['chat', 'dispatch', 'kill', 'retry', 'remove', 'clear', 'settings', 'resume', 'ping'])
 
 const server = http.createServer(async (req, res) => {
   // Only this machine, by name: a page on another origin that resolves its

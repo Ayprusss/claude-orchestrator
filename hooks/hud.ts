@@ -17,6 +17,15 @@ export type HudCommand =
     }
   | { type: 'kill' | 'retry' | 'remove'; id: string }
   | { type: 'clear' }
+  | {
+      type: 'settings'
+      maxParallel?: number
+      isStandbyOnLimit?: boolean
+      isDiffViewOn?: boolean
+      isPingOn?: boolean
+    }
+  | { type: 'ping' }
+  | { type: 'resume' }
 
 export type HudEvent = { type: string; [key: string]: unknown }
 export type HudPhase = 'idle' | 'thinking' | 'speaking' | 'tool'
