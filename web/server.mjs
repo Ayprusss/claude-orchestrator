@@ -160,13 +160,18 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, html, 'text/html; charset=utf-8')
     }
 
-    // HUD modules: web/hud/<name>.js, by plain name only.
-    const mod = /^\/hud\/([a-z][a-z0-9-]*)\.js$/.exec(url.pathname)
-    if (req.method === 'GET' && mod) {
-      if (!queryOk) return send(res, 403, '// bad token', 'text/javascript; charset=utf-8')
-      const file = path.join(here, 'hud', `${mod[1]}.js`)
-      if (!fs.existsSync(file)) return send(res, 404, '// no such module', 'text/javascript; charset=utf-8')
-      return send(res, 200, fs.readFileSync(file, 'utf8'), 'text/javascript; charset=utf-8')
+    // HUD static files, by plain name only: web/hud.css, web/hud/<name>.js, web/hud/core/<name>.js.
+    const mod = /^\/hud\/(core\/)?([a-z][a-z0-9-]*)\.js$/.exec(url.pathname)
+
+    const isCss = url.pathname === '/hud.css'
+    if (req.method === 'GET' && (mod || isCss)) {
+      const type = isCss ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8'
+      const note = isCss ? '/* ' : '// '
+      const end = isCss ? ' */' : ''
+      if (!queryOk) return send(res, 403, note + 'bad token' + end, type)
+      const file = isCss ? path.join(here, 'hud.css') : path.join(here, 'hud', mod[1] ? 'core' : '.', `${mod[2]}.js`)
+      if (!fs.existsSync(file)) return send(res, 404, note + 'no such file' + end, type)
+      return send(res, 200, fs.readFileSync(file, 'utf8'), type)
     }
 
     if (req.method === 'GET' && url.pathname === '/api/events') {
