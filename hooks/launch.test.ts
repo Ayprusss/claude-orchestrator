@@ -7,6 +7,7 @@ const SPEC = {
   title: 'Write tests',
   agentType: '',
   model: 'sonnet',
+  effort: '',
   folder: 'D:/work/demo',
   prompt: 'Add tests for the parser.\nKeep them small.',
 }
@@ -35,4 +36,11 @@ test('launch tags round-trip, and other descriptions do not match', async () => 
   expect(LAUNCH_TAG.exec(`${launchTag('abc123')} Write tests`)?.[1]).toBe('abc123')
   expect(LAUNCH_TAG.exec('Write tests')).toBeNull()
   expect(LAUNCH_TAG.exec('orch-abc1234 x')).toBeNull()
+})
+
+test('an effort line appears only when the task has one', async () => {
+  const text = launchRequest([{ ...SPEC, effort: 'high' }, { ...SPEC, id: 'def456' }])
+  expect(text).toContain('- effort: high')
+  expect(text).toContain("pass effort as the `effort` parameter of the Agent tool")
+  expect(text.split('Task def456')[1]).not.toContain('- effort:')
 })
