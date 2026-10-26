@@ -63,6 +63,10 @@ function remember(event) {
       if (state.messages.length > HISTORY) state.messages.shift()
       if (event.role === 'assistant') state.partial = ''
       break
+    // A resumed conversation: its messages replace the kept history.
+    case 'history':
+      state.messages = Array.isArray(event.messages) ? event.messages.slice(-HISTORY) : []
+      break
   }
 }
 
@@ -106,7 +110,11 @@ function openBrowser(url) {
   }
 }
 
-const COMMANDS = new Set(['chat', 'dispatch', 'kill', 'retry', 'remove', 'clear', 'settings', 'resume', 'ping'])
+const COMMANDS = new Set([
+  'chat', 'dispatch', 'kill', 'retry', 'remove', 'clear', 'settings', 'resume', 'ping',
+  // hud-controls (HUD_CONTROLS_PLAN.md)
+  'session-model', 'session-effort', 'task-config', 'history-load',
+])
 
 const server = http.createServer(async (req, res) => {
   // Only this machine, by name: a page on another origin that resolves its
@@ -132,6 +140,15 @@ const server = http.createServer(async (req, res) => {
       // Read on each request so edits show on refresh.
       const html = fs.readFileSync(path.join(here, 'index.html'), 'utf8')
       return send(res, 200, html, 'text/html; charset=utf-8')
+    }
+
+    // HUD modules: web/hud/<name>.js, by plain name only.
+    const mod = /^\/hud\/([a-z][a-z0-9-]*)\.js$/.exec(url.pathname)
+    if (req.method === 'GET' && mod) {
+      if (!queryOk) return send(res, 403, '// bad token', 'text/javascript; charset=utf-8')
+      const file = path.join(here, 'hud', `${mod[1]}.js`)
+      if (!fs.existsSync(file)) return send(res, 404, '// no such module', 'text/javascript; charset=utf-8')
+      return send(res, 200, fs.readFileSync(file, 'utf8'), 'text/javascript; charset=utf-8')
     }
 
     if (req.method === 'GET' && url.pathname === '/api/events') {

@@ -76,6 +76,8 @@ const DEFAULT_SETTINGS: Settings = {
   isDiffViewOn: true,
   isPingOn: true,
   agentLaunch: 'session',
+  isHudPermissionsOn: true,
+  hudPermissionWaitSec: 60,
   ...DEFAULT_MEMORY_SETTINGS,
 }
 const DEFAULT_VIEW: View = { tab: 'sessions', selected: '', docPage: 'start' }
@@ -101,12 +103,12 @@ const projects = atom(
 const tasks = atom(
   { plugin: 'orchestrator', key: 'tasks' } as const,
   [] as Task[],
-  { shape: 'orch-tasks-3' },
+  { shape: 'orch-tasks-4' },
 )
 const settings = atom(
   { plugin: 'orchestrator', key: 'settings' } as const,
   DEFAULT_SETTINGS,
-  { shape: 'orch-settings-6' },
+  { shape: 'orch-settings-7' },
 )
 const view = atom(
   { plugin: 'orchestrator', key: 'view' } as const,

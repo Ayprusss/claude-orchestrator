@@ -396,6 +396,7 @@ body.limited .limit-banner { display: flex; animation: rise .5s; }
     </div>
     <div class="usage" id="usage"></div>
     <div class="right-tools">
+      <div class="slot" id="slotHeader"></div>
       <div class="link" id="link"><span class="led"></span><span id="linkText">CONNECTING</span></div>
       <span id="clock">--:--:--</span>
       <button class="icon-btn" id="voice" title="Read replies aloud" aria-label="Read replies aloud">
@@ -446,6 +447,7 @@ body.limited .limit-banner { display: flex; animation: rise .5s; }
           <option value="process">process</option>
         </select>
         <input id="dModel" placeholder="model (optional)" size="14" aria-label="Model">
+        <span class="slot" id="slotDispatch"></span>
       </div>
       <span class="hint" id="hint">ENTER send · SHIFT+ENTER newline · / focus</span>
     </div>
@@ -470,6 +472,7 @@ body.limited .limit-banner { display: flex; animation: rise .5s; }
     <div class="block-label">OUTPUT</div>
     <pre class="output-box" id="dOutput"></pre>
     <div class="actions" id="dActions"></div>
+    <div class="slot" id="slotDrawer"></div>
   </div>
 </aside>
 
@@ -516,6 +519,7 @@ body.limited .limit-banner { display: flex; animation: rise .5s; }
       <div class="set-head"><h3>ACCOUNT USAGE</h3></div>
       <div id="meters"></div>
     </section>
+    <div class="slot" id="slotSettings"></div>
   </div>
 </aside>
 
@@ -548,6 +552,13 @@ const S = {
 }
 
 const now = () => Date.now() + S.skew
+
+// Extension points for web/hud/*.js modules (see window.HUD below).
+const listeners = new Map()
+const drawerHooks = []
+// Fields a module adds to every dispatch command (model, effort).
+let dispatchExtras = {}
+const HUD_MODULES = ['session', 'tasks', 'permissions']
 
 async function command(cmd) {
   try {
@@ -607,6 +618,14 @@ function handle(m) {
     case 'diff': Diffs.add(m); break
     case 'ping': allClear(m.isTest); break
     case 'toast': toast(m.text, m.level); break
+    // A resumed conversation's history, replacing what Comms shows.
+    case 'history':
+      S.messages = Array.isArray(m.messages) ? m.messages.slice(-150) : []
+      renderComms()
+      break
+  }
+  for (const fn of [...(listeners.get(m.type) || []), ...(listeners.get('*') || [])]) {
+    try { fn(m) } catch (err) { console.error('HUD module:', err) }
   }
 }
 
@@ -827,6 +846,10 @@ function renderDrawer() {
   $('dActions').innerHTML =
     (live ? '<button class="ghost warn" data-act="kill">Kill</button>' : '<button class="ghost" data-act="retry">Retry</button>') +
     (t.status !== 'running' ? '<button class="ghost warn" data-act="remove">Remove</button>' : '')
+  $('slotDrawer').innerHTML = ''
+  for (const fn of drawerHooks) {
+    try { fn(t, $('slotDrawer')) } catch (err) { console.error('HUD module:', err) }
+  }
 }
 
 // ======================================================================
@@ -990,7 +1013,7 @@ async function send() {
     const projectId = $('dProject').value
     if (!projectId) return toast('Register a project first (Projects tab in /orchestrator).', 'error')
     store.set('project', projectId)
-    if (await command({ type: 'dispatch', projectId, title: '', prompt: text, backend: $('dBackend').value, model: $('dModel').value.trim() })) {
+    if (await command({ type: 'dispatch', projectId, title: '', prompt: text, backend: $('dBackend').value, model: $('dModel').value.trim(), ...dispatchExtras })) {
       input.value = ''
       Orb.ripple()
     }
@@ -1873,6 +1896,39 @@ addEventListener('keydown', e => {
   }
 })
 
+// ======================================================================
+// Modules: web/hud/*.js extend the HUD through window.HUD
+// ======================================================================
+// Each module is a plain script that runs after this one. It reads state,
+// listens to events, sends commands and draws into its slots; it never
+// edits this file's internals.
+window.HUD = Object.freeze({
+  /** Sends a command to the plugin (POST /api/command); resolves true when accepted. */
+  command,
+  /** The live state object (read only by convention): tasks, projects, snapshot fields. */
+  state: () => S,
+  /** Calls fn(event) for every SSE event of `type` ('*' for all), after the HUD's own handling. */
+  on(type, fn) {
+    if (!listeners.has(type)) listeners.set(type, [])
+    listeners.get(type).push(fn)
+  },
+  /** Calls fn(task, slotEl) each time the task drawer draws; the slot is cleared first. */
+  onDrawer(fn) { drawerHooks.push(fn) },
+  /** Fields merged into every dispatch command this HUD sends, e.g. { model, effort }. */
+  setDispatchExtras(extras) { dispatchExtras = { ...(extras || {}) } },
+  /** A mount point: 'header', 'dispatch', 'drawer', 'settings' or 'overlay'. */
+  slot: name => $('slot' + name[0].toUpperCase() + name.slice(1)),
+  toast: (text, level) => toast(text, level),
+  esc,
+  token: TOKEN,
+})
+for (const name of HUD_MODULES) {
+  const el = document.createElement('script')
+  el.src = 'hud/' + name + '.js?t=' + encodeURIComponent(TOKEN)
+  el.defer = true
+  document.body.appendChild(el)
+}
+
 setMode(S.mode)
 setLinked(false)
 renderTasks(); renderComms(); renderStats()
@@ -1881,5 +1937,6 @@ tickElapsed()
 connect()
 })()
 </script>
+<div class="slot" id="slotOverlay"></div>
 </body>
 </html>
