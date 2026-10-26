@@ -305,6 +305,15 @@ Every edit the main session or an agent task makes shows up as a code diff:
 - **Comms** lists every change, with **VIEW** to reopen it. A task's details list its own changes, and its row in Operations shows a ✎ count.
 - Turn pop-ups off in Settings (**Pop up code changes**), and changes are only listed.
 
+## Controls without the terminal
+
+- **MODEL / EFFORT** (top right) set the main session's model, as ${'`/model`'} would. Effort can be set only where this Claude Code build has a command for it; otherwise the picker is greyed out and its tooltip says why. It still shows the current level.
+- **⚙ MODEL/EFFORT** (Dispatch row) picks the model and effort for the tasks you dispatch next. A queued task's details let you change both until it starts. Agent tasks the main session launches and process tasks use both. Agents started *from the plugin* (Settings) can take a model but not an effort level.
+- **Mode badge** (top right) shows the session's permission mode: Auto Mode, Planning Mode, Manual Mode or Accept Edits On. It updates with each prompt and at the end of each turn.
+- **Shift+Tab** in the HUD picks the mode to switch to (**next:** chip); **Esc** clears it. Plugins cannot change the mode on demand, so the switch happens when you answer the next permission prompt in the HUD with **Allow and switch**. In auto mode most actions need no prompt, so the switch may wait.
+- **Permission prompts** appear as a card while a HUD tab is open: **1 Allow**, **2 Allow and switch to <next>**, **3 Deny**, with a countdown. An unanswered card falls back to the terminal's own prompt. Turn this off, or change the wait (15–300 s, 60 by default), under **Permission prompts** in Settings.
+- **Resumed conversations:** after ${'`claude --resume`'}, or when the HUD opens mid-conversation, Comms fills with the conversation so far, marked **YOU · EARLIER**. The engine keeps no time for those rows, so they show no clock.
+
 ## The all-done ping
 
 When the main session and every task are done (nothing running, nothing queued), the orchestrator plays a chime and the HUD flashes **ALL OPERATIONS COMPLETE**. It waits 3 seconds first, because a finished task wakes the main session to read the result. A quick reply under 15 seconds with no tasks stays quiet. Tasks held back by a usage limit count as not done.

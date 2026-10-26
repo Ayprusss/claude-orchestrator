@@ -187,3 +187,31 @@ export async function isResumed($: E): Promise<boolean>
   - A prompt answered in the HUD runs, and the mode switch applies.
   - The terminal prompt still shows when no HUD tab is open.
   - `claude --resume` fills Comms.
+
+## 6. Build status
+
+Built by four Sonnet agents in parallel (units S, T, P, H), then merged and wired by the main session. 174 tests pass, the project type-checks, `claude plugin validate` passes, and every browser script parses.
+
+**Smoke test in a real browser** (a throwaway HUD server fed a sample snapshot; Playwright):
+- All three modules loaded with no console errors.
+- The header showed the MODEL and EFFORT pickers (effort disabled, with its reason), plus the mode badge.
+- Shift+Tab cycled the next mode, and Esc cleared it.
+- The ⚙ popover opened from the Dispatch row.
+- A queued task's drawer offered model and effort with SAVE.
+- A permission prompt posted to the server showed as a card. Pressing **2** returned `{ behavior: 'allow', mode: 'plan' }` to the waiting request.
+- The pushed history filled Comms.
+- Fixed during the smoke test: the header controls wrapped onto a second line, and history rows were labelled "TERMINAL" (now "EARLIER").
+
+**Differences from the plan:**
+- Mode and effort are read on `classic.UserPromptSubmit`, `classic.Stop` and `classic.PermissionRequest`. Under this API, `classic.PreToolUse` receives the tool call, not the classic input.
+- The types show no `/effort` command. Setting effort is tried at run time: the `effort` command, then a config row; otherwise the picker is disabled with its reason.
+- `SessionMessage` has no timestamp or meta flag. History rows have `at: 0`, and injected rows are recognized by their text.
+- A refused HUD command comes back as an error toast, since `HUD.command` only confirms the server accepted it.
+
+**Still to verify live:**
+- [ ] `/model <alias>` from the HUD switches the main session.
+- [ ] Whether effort can be set in this build.
+- [ ] A queued task's model and effort reach its Agent call or `claude -p`.
+- [ ] A prompt answered in the HUD runs, and **Allow and switch** changes the mode.
+- [ ] With no HUD tab open, the terminal prompt shows at once.
+- [ ] `claude --resume` fills Comms.

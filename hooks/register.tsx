@@ -48,6 +48,17 @@ import {
   withMemory as memWithMemory,
 } from './memory/harness'
 import { memorySettingsRows, memoryTab } from './memory/pane'
+import { historyMessages, isResumed } from './controls/history'
+import { askInHud, currentMode, noteMode, summarizeCall, toDecision } from './controls/permissions'
+import {
+  EFFORT_LEVELS,
+  MODEL_CHOICES,
+  noteEffort,
+  sessionInfo,
+  setSessionEffort,
+  setSessionModel,
+} from './controls/session'
+import { canConfigure, normalizeEffort, normalizeModel, processModelArgs } from './controls/tasks'
 import {
   NO_LIMIT,
   RECHECK_MS,
@@ -334,7 +345,7 @@ async function launch($: E, task: Task) {
     prompt,
     ...splitArgs(cfg.processArgs),
   ]
-  if (task.model) argv.push('--model', task.model)
+  argv.push(...processModelArgs(task.model, normalizeEffort(task.effort)))
   let buf = ''
   let flushedAt = 0
   try {
@@ -428,6 +439,7 @@ async function askLaunches($: E, list: Task[]) {
       title: task.title,
       agentType: task.agentType,
       model: task.model,
+      effort: normalizeEffort(task.effort),
       folder: project.path,
       prompt: resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions),
     })
@@ -555,6 +567,7 @@ type NewTask = {
   agentType: string
   isNotify: boolean
   why?: string
+  effort?: string
 }
 
 async function addTasks($: E, specs: NewTask[]): Promise<string[]> {
@@ -819,6 +832,7 @@ function describeTask(t: Task, now: number, withOutput: boolean): string {
   const head = `${t.id} [${isStarting ? 'running: waiting for the main session to launch it' : t.status}] ${t.title} (${t.backend}, ${ran})`
   if (!withOutput) return head
   const notes = [
+    ...(t.model || t.effort ? [`Model: ${t.model || 'default'}${t.effort ? ` · effort ${t.effort}` : ''}`] : []),
     ...(t.why ? [`Why: ${t.why}`] : []),
     ...(t.outcome ? [`Outcome: ${t.outcome}`] : []),
     ...(t.summary ? [`Summary: ${t.summary}`] : []),
@@ -839,6 +853,7 @@ async function retryTask($: E, t: Task) {
       agentType: t.agentType,
       isNotify: t.isNotify,
       ...(t.why ? { why: t.why } : {}),
+      ...(t.effort ? { effort: t.effort } : {}),
     },
   ])
 }
@@ -861,6 +876,10 @@ async function hudSnapshot($: E) {
     isStandbyOnLimit: cfg.isStandbyOnLimit !== false,
     isDiffViewOn: cfg.isDiffViewOn !== false,
     isPingOn: cfg.isPingOn !== false,
+    isHudPermissionsOn: cfg.isHudPermissionsOn !== false,
+    hudPermissionWaitSec: cfg.hudPermissionWaitSec ?? 60,
+    session: { ...(await sessionInfo($)), mode: currentMode() },
+    choices: { models: MODEL_CHOICES, efforts: EFFORT_LEVELS },
     limit: lim,
     usage: windowsForHud(windows),
     projects: projs.map(p => ({ id: p.id, name: p.name, path: p.path })),
@@ -870,6 +889,7 @@ async function hudSnapshot($: E) {
       status: t.status,
       backend: t.backend,
       model: t.model,
+      effort: t.effort ?? '',
       projectId: t.projectId,
       project: projectName(t.projectId),
       interruptions: t.interruptions ?? 0,
@@ -880,6 +900,13 @@ async function hudSnapshot($: E) {
       endedAt: t.endedAt,
     })),
   }
+}
+
+/** Fills the HUD's Comms with the conversation so far (a resumed one, or after a reload). */
+async function pushHistory($: E) {
+  if (!hud.isUp()) return
+  const messages = await historyMessages($, 150)
+  if (messages.length) hud.event({ type: 'history', messages })
 }
 
 async function onHudCommand($: E, cmd: HudCommand) {
@@ -909,9 +936,10 @@ async function onHudCommand($: E, cmd: HudCommand) {
           title: String(cmd.title ?? '').trim() || prompt.slice(0, 40),
           prompt,
           backend: cmd.backend === 'process' ? 'process' : 'agent',
-          model: String(cmd.model ?? '').trim(),
+          model: normalizeModel(cmd.model),
           agentType: 'general-purpose',
           isNotify: false,
+          ...(normalizeEffort(cmd.effort) ? { effort: normalizeEffort(cmd.effort) } : {}),
         },
       ])
       return toast(`Queued in ${project.name}.`)
@@ -937,11 +965,34 @@ async function onHudCommand($: E, cmd: HudCommand) {
       if (typeof cmd.isStandbyOnLimit === 'boolean') patch.isStandbyOnLimit = cmd.isStandbyOnLimit
       if (typeof cmd.isDiffViewOn === 'boolean') patch.isDiffViewOn = cmd.isDiffViewOn
       if (typeof cmd.isPingOn === 'boolean') patch.isPingOn = cmd.isPingOn
+      if (typeof cmd.isHudPermissionsOn === 'boolean') patch.isHudPermissionsOn = cmd.isHudPermissionsOn
+      if (typeof cmd.hudPermissionWaitSec === 'number') {
+        patch.hudPermissionWaitSec = Math.min(300, Math.max(15, Math.round(cmd.hudPermissionWaitSec)))
+      }
       await applySettings($, patch)
       return toast('Settings saved.')
     }
     case 'resume':
       return resumeByHand($)
+    case 'session-model': {
+      const r = await setSessionModel($, String(cmd.model ?? ''))
+      return toast(r.text, r.ok ? 'info' : 'error')
+    }
+    case 'session-effort': {
+      const r = await setSessionEffort($, String(cmd.effort ?? ''))
+      return toast(r.text, r.ok ? 'info' : 'error')
+    }
+    case 'task-config': {
+      const t = list.find(x => x.id === cmd.id)
+      if (!t) return toast('That task is gone.', 'error')
+      if (!canConfigure(t)) return toast('Only a queued task can change its model or effort.', 'error')
+      const model = normalizeModel(cmd.model)
+      const effort = normalizeEffort(cmd.effort)
+      await setTask($, t.id, { model, effort })
+      return toast(`Task ${t.id} will run on ${model || 'the default model'}${effort ? `, ${effort} effort` : ''}.`)
+    }
+    case 'history-load':
+      return pushHistory($)
     case 'ping':
       // The settings page's "test" button.
       hud.event({ type: 'ping', isTest: true })
@@ -1093,6 +1144,7 @@ async function stopHud() {
 async function startHud($: E, isOpening: boolean): Promise<string> {
   await update($, hudState, () => ({ isOn: true }))
   await startHudServer($)
+  void pushHistory($).catch(() => undefined)
   if (isOpening) {
     let isOpened = false
     try {
@@ -1178,6 +1230,11 @@ export const register: Register = on => {
           why: {
             type: 'string',
             description: 'One line on why this task exists. Kept in the orchestrator ledger, so it survives compaction.',
+          },
+          effort: {
+            type: 'string',
+            enum: ['low', 'medium', 'high', 'xhigh', 'max'],
+            description: "Optional effort level for the task's agent or process. Leave it out for its default.",
           },
         },
         required: ['project', 'title', 'prompt'],
@@ -1287,6 +1344,10 @@ export const register: Register = on => {
     }
 
     void pump($)
+    // A resumed conversation: once the HUD is up, its history fills Comms.
+    void isResumed($)
+      .then(isRes => (isRes ? $.clock.after(1500, () => void pushHistory($).catch(() => undefined)) : undefined))
+      .catch(() => undefined)
     // A reload kills the HUD's server; bring it back for any open browser tab.
     if ((await read($, hudState)).isOn) {
       void startHud($, false).catch(err => $.ui.log(`HUD: ${String(err)}`, { to: 'debug' }))
@@ -1541,6 +1602,45 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // ---- HUD controls: mode, effort and permission prompts --------------
+
+  // Every classic hook input says the session's permission mode and effort.
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    noteMode(e)
+    noteEffort(e as { effort?: { level?: unknown } })
+    return next(e)
+  })
+
+  // A turn's end: a mode changed in the terminal shows by then.
+  on('classic.Stop', async ($, e, next) => {
+    noteMode(e)
+    noteEffort(e as { effort?: { level?: unknown } })
+    return next(e)
+  })
+
+  // A permission prompt: answered in the HUD when a HUD tab is open and the
+  // setting is on; otherwise, or when the HUD gives no answer in time, the
+  // terminal prompt shows as usual. The wait is inside $.http.fetch, so it
+  // does not run this hook's budget.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    noteMode(e)
+    const cfg = await read($, settings)
+    if (cfg.isHudPermissionsOn === false || !hud.isUp()) return next(e)
+    const answer = await askInHud($, {
+      baseUrl: `http://127.0.0.1:${hud.link.port}`,
+      token: hud.link.token,
+      waitMs: (cfg.hudPermissionWaitSec ?? 60) * 1000,
+      request: {
+        id: `${uid()}${uid()}`,
+        tool: e.tool_name,
+        summary: summarizeCall(e.tool_name, e.tool_input),
+        mode: typeof e.permission_mode === 'string' ? e.permission_mode : currentMode(),
+      },
+    })
+    if (!answer) return next(e)
+    return { decision: toDecision(answer) } as Awaited<ReturnType<typeof next>>
+  }).catch(($, e, next) => next(e))
+
   // The account's windows moved: enter standby at 100%, leave it once a
   // window that put us there has room again.
   on('session.measure', async ($, e, next) => {
@@ -1575,9 +1675,10 @@ export const register: Register = on => {
         title: String(input.title ?? 'task'),
         prompt: String(input.prompt ?? ''),
         backend: input.backend === 'process' ? 'process' : 'agent',
-        model: typeof input.model === 'string' ? input.model : '',
+        model: normalizeModel(input.model),
         agentType: 'general-purpose',
         isNotify: true,
+        ...(normalizeEffort(input.effort) ? { effort: normalizeEffort(input.effort) } : {}),
         ...(typeof input.why === 'string' && input.why.trim() ? { why: input.why.trim().slice(0, 200) } : {}),
       },
     ])

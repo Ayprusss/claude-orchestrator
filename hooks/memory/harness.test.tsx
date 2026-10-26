@@ -96,6 +96,29 @@ test('dispatch keeps why on the task and in the ledger', async ($, on) => {
   expect(ledger.tasks[0]?.projectKey).toMatch(/^demo-[0-9a-f]{8}$/)
 })
 
+test('dispatch keeps a task model and effort; a bad effort is dropped', async ($, on) => {
+  session(on)
+  const q = await call($, {
+    tool: 'mcp__orchestrator__dispatch',
+    project: '/work/demo',
+    title: 'Refactor',
+    prompt: 'Tidy up.',
+    model: 'sonnet',
+    effort: 'high',
+  })
+  const id = /Queued task ([a-z0-9]{6})/.exec(text(q))?.[1]
+  expect(text(await call($, { tool: 'mcp__orchestrator__status', id }))).toContain('Model: sonnet · effort high')
+  const q2 = await call($, {
+    tool: 'mcp__orchestrator__dispatch',
+    project: '/work/demo',
+    title: 'Other',
+    prompt: 'p',
+    effort: 'ultra; rm -rf /',
+  })
+  const id2 = /Queued task ([a-z0-9]{6})/.exec(text(q2))?.[1]
+  expect(text(await call($, { tool: 'mcp__orchestrator__status', id: id2 }))).not.toContain('effort')
+})
+
 test('remember and memory_search find a fact; forget hides it', async ($, on) => {
   session(on)
   await call($, { tool: 'mcp__orchestrator__dispatch', project: '/work/demo', title: 't', prompt: 'p' })

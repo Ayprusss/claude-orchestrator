@@ -72,6 +72,9 @@ header {
 .stat i { font-style: normal; color: var(--text); font-weight: 500; margin-left: 4px; }
 .stat.run i { color: var(--amber); } .stat.done i { color: var(--green); } .stat.fail i { color: var(--red); }
 .right-tools { display: flex; align-items: center; gap: 10px; }
+/* Module mount points: header controls sit in one row beside the link. */
+#slotHeader { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
+#slotHeader > * { flex: none; }
 .link { display: flex; align-items: center; gap: 7px; font: 11px var(--mono); letter-spacing: .14em; color: var(--muted); }
 .link .led { width: 8px; height: 8px; border-radius: 50%; background: var(--red); box-shadow: 0 0 8px var(--red); }
 .link.on .led { background: var(--green); box-shadow: 0 0 10px var(--green); }
@@ -893,7 +896,7 @@ function msgHtml(m, extra = '') {
       <span class="dot" style="background:${o.color}"></span><span class="who">${esc(o.name)}</span>
       <span class="path">${esc(shortPath(m.file))}</span><span class="add">+${m.added}</span><span class="del">&minus;${m.removed}</span><span class="view">VIEW</span></button></div>`
   }
-  const who = m.role === 'assistant' ? 'ORCHESTRATOR' : m.role === 'user' ? (m.source === 'hud' ? 'YOU · HUD' : 'YOU · TERMINAL') : 'SYSTEM'
+  const who = m.role === 'assistant' ? 'ORCHESTRATOR' : m.role === 'user' ? (m.source === 'hud' ? 'YOU · HUD' : m.source === 'history' ? 'YOU · EARLIER' : 'YOU · TERMINAL') : 'SYSTEM'
   if (m.role === 'system') {
     return `<div class="msg system ${esc(m.status || '')} ${extra}"><div class="body">◆ ${esc(m.text)}</div></div>`
   }
