@@ -27,12 +27,23 @@ export type OrchTask = {
   // it was last asked, and how many times.
   launchAskedAt?: number
   launchAsks?: number
+  // One line on why the task exists (dispatch's optional `why`), kept in the ledger.
+  why?: string
+  // Set at finish from the task's summary (memory phase 2): the one-paragraph
+  // summary, its outcome ('succeeded' | 'partial' | 'failed' | 'unknown'), and
+  // the files an agent task edited.
+  summary?: string
+  outcome?: string
+  files?: string[]
   createdAt: number
   startedAt?: number
   endedAt?: number
 }
 
-export type OrchSettings = {
+// The memory fields (isMemoryOn, memoryDir, summaryDetail, summaryModel,
+// isTranscriptKept, recallBudgetChars) come from OrchMemorySettings; stored
+// settings merge over the defaults, so older ones keep working.
+export type OrchSettings = OrchMemorySettings & {
   maxParallel: number
   claudeBin: string
   processArgs: string
@@ -45,7 +56,7 @@ export type OrchSettings = {
   agentLaunch: OrchAgentLaunch
 }
 
-export type OrchTab = 'sessions' | 'new' | 'projects' | 'settings' | 'docs'
+export type OrchTab = 'sessions' | 'new' | 'projects' | 'memory' | 'settings' | 'docs'
 
 export type OrchView = {
   tab: OrchTab
@@ -79,6 +90,58 @@ export type OrchLimit = {
   reason: string
 }
 
+// ---- Memory harness (MEMORY_HARNESS_PLAN.md) --------------------------------
+// Mirrors of hooks/memory/contract.ts, which is their source: this file must
+// be self-contained (no imports), so keep the two in step.
+
+export type OrchSummaryDetail = 'off' | 'short' | 'detailed'
+
+// The fields the harness adds to OrchSettings (contract: MemorySettings).
+export type OrchMemorySettings = {
+  isMemoryOn: boolean
+  // '' = the default folder, <home>/.claude/orchestrator-memory
+  memoryDir: string
+  summaryDetail: OrchSummaryDetail
+  summaryModel: string
+  isTranscriptKept: boolean
+  recallBudgetChars: number
+}
+
+export type OrchLedgerGoal = { id: string; text: string; status: 'open' | 'done' | 'dropped'; at: number }
+export type OrchLedgerDecision = { id: string; text: string; at: number }
+
+export type OrchLedgerTask = {
+  id: string
+  project: string
+  projectKey: string
+  title: string
+  why?: string
+  status: OrchStatus
+  summary?: string
+  // Clipped to 200 characters, for carry-over.
+  prompt?: string
+  createdAt: number
+  endedAt?: number
+}
+
+// One session's ledger (contract: Ledger), saved as ledgers/<sessionId>.json.
+export type OrchLedger = {
+  version: 1
+  sessionId: string
+  startedAt: number
+  updatedAt: number
+  carriedFrom?: string
+  goals: OrchLedgerGoal[]
+  decisions: OrchLedgerDecision[]
+  tasks: OrchLedgerTask[]
+}
+
+export type OrchMemoryPart = 'knowledge' | 'inbox' | 'episodes' | 'ledger'
+
+// The Memory tab's view (contract: MemoryView). `selected` is a fact id, an
+// episode's task id, or 'clear:<projectKey>' while Clear waits for its second press.
+export type OrchMemoryView = { projectKey: string; part: OrchMemoryPart; selected: string }
+
 declare module 'claude-code' {
   interface PluginState {
     orchestrator: {
@@ -89,6 +152,10 @@ declare module 'claude-code' {
       draft: Shaped<OrchDraft>
       hud: Shaped<OrchHud>
       limit: Shaped<OrchLimit>
+      // This session's ledger of goals, decisions and tasks (memory phase 1).
+      ledger: Shaped<OrchLedger>
+      // The Memory tab's project, part and selection.
+      memoryView: Shaped<OrchMemoryView>
     }
   }
 }
