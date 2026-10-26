@@ -17,6 +17,8 @@ import { buildDiff } from './diffs'
 import { DOCS } from './docs'
 import * as hud from './hud'
 import type { HudCommand } from './hud'
+import { LAUNCH_TAG, launchRequest } from './launch'
+import type { LaunchSpec } from './launch'
 import {
   NO_LIMIT,
   RECHECK_MS,
@@ -44,6 +46,7 @@ const DEFAULT_SETTINGS: Settings = {
   isStandbyOnLimit: true,
   isDiffViewOn: true,
   isPingOn: true,
+  agentLaunch: 'session',
 }
 const DEFAULT_VIEW: View = { tab: 'sessions', selected: '', docPage: 'start' }
 const DEFAULT_DRAFT: Draft = {
@@ -68,12 +71,12 @@ const projects = atom(
 const tasks = atom(
   { plugin: 'orchestrator', key: 'tasks' } as const,
   [] as Task[],
-  { shape: 'orch-tasks-1' },
+  { shape: 'orch-tasks-2' },
 )
 const settings = atom(
   { plugin: 'orchestrator', key: 'settings' } as const,
   DEFAULT_SETTINGS,
-  { shape: 'orch-settings-4' },
+  { shape: 'orch-settings-5' },
 )
 const view = atom(
   { plugin: 'orchestrator', key: 'view' } as const,
@@ -126,6 +129,13 @@ let platform: 'windows' | 'mac' | 'linux' | undefined
 const PING_SETTLE_MS = 3000
 // A quick reply with no tasks is not "work" worth a ping.
 const QUICK_TURN_MS = 15_000
+
+// Agent tasks the main session launches (agentLaunch 'session'): see launch.ts.
+// Ask again when a launch has not come this long after asking, while the
+// main session is idle; give up after this many asks.
+const LAUNCH_RETRY_MS = 3 * 60_000
+const LAUNCH_MAX_ASKS = 3
+let launchTimer: { cancel: () => void } | undefined
 
 const uid = () => Math.random().toString(36).slice(2, 8)
 const clip = (text: string, cap: number) =>
@@ -302,6 +312,8 @@ async function launch($: E, task: Task) {
 async function pump($: E) {
   if (isPumping) return
   isPumping = true
+  // Agent tasks for the main session to launch, asked for in one message.
+  const toAsk: Task[] = []
   try {
     for (;;) {
       const [list, cfg, lim] = await Promise.all([
@@ -323,13 +335,91 @@ async function pump($: E) {
       })
       hadTask = true
       await markBusy($)
-      void launch($, { ...next, status: 'running' })
+      if (next.backend === 'agent' && cfg.agentLaunch !== 'plugin') toAsk.push({ ...next, status: 'running' })
+      else void launch($, { ...next, status: 'running' })
     }
   } finally {
     isPumping = false
   }
+  if (toAsk.length) await askLaunches($, toAsk)
   await refreshStatus($)
   await checkIdle($)
+}
+
+// ---- Agent tasks launched by the main session -----------------------
+
+/** Asks the main session, in one message, to launch these agent tasks with its Agent tool. */
+async function askLaunches($: E, list: Task[]) {
+  const projs = await read($, projects)
+  const now = await $.clock.now()
+  const specs: LaunchSpec[] = []
+  for (const task of list) {
+    const project = projs.find(p => p.id === task.projectId)
+    if (!project) {
+      await finish($, task.id, 'failed', 'The project of this task no longer exists.')
+      continue
+    }
+    await setTask($, task.id, { launchAskedAt: now, launchAsks: (task.launchAsks ?? 0) + 1 })
+    specs.push({
+      id: task.id,
+      title: task.title,
+      agentType: task.agentType,
+      model: task.model,
+      folder: project.path,
+      prompt: resumedPrompt(task.prompt, task.interruptions),
+    })
+  }
+  if (!specs.length) return
+  try {
+    await $.prompt.submit({ text: launchRequest(specs) })
+  } catch {
+    // The session may be ending; the check below asks again or gives up.
+  }
+  scheduleLaunchCheck($)
+}
+
+function scheduleLaunchCheck($: E) {
+  launchTimer?.cancel()
+  launchTimer = $.clock.after(LAUNCH_RETRY_MS, () => void checkLaunches($).catch(() => undefined))
+}
+
+/** Asks again for launches that never came, once the main session is idle; fails them after the last ask. */
+async function checkLaunches($: E) {
+  launchTimer = undefined
+  const list = await read($, tasks)
+  const waiting = list.filter(t => t.status === 'running' && t.backend === 'agent' && !t.agentId && t.launchAskedAt)
+  if (!waiting.length) return
+  // A busy session has not read its queued messages yet.
+  if (isMainBusy) {
+    scheduleLaunchCheck($)
+    return
+  }
+  const now = await $.clock.now()
+  const stale = waiting.filter(t => now - (t.launchAskedAt ?? 0) >= LAUNCH_RETRY_MS)
+  const again: Task[] = []
+  for (const t of stale) {
+    if ((t.launchAsks ?? 0) >= LAUNCH_MAX_ASKS) {
+      await finish($, t.id, 'failed', `The main session did not launch this task after ${LAUNCH_MAX_ASKS} requests. Retry it, or set Settings: Start agent tasks to "from the plugin".`)
+    } else again.push(t)
+  }
+  if (again.length) await askLaunches($, again)
+  else if (waiting.length > stale.length) scheduleLaunchCheck($)
+}
+
+/** The agent of a task the main session launched started (or did not). */
+async function onLaunched($: E, task: Task, res: { agentId?: string; deny?: string }) {
+  if (res.deny !== undefined || res.agentId === undefined) {
+    if (looksLikeLimit(res.deny)) await onLimitFailure($, task.id, res.deny ?? '', 'rate_limit', 0)
+    else await finish($, task.id, 'failed', res.deny ?? 'The agent did not start.')
+    return
+  }
+  agentToTask.set(res.agentId, task.id)
+  await setTask($, task.id, { agentId: res.agentId, launchAskedAt: undefined })
+  const early = unclaimed.get(res.agentId)
+  if (early) {
+    unclaimed.delete(res.agentId)
+    await finish($, task.id, early.status, early.answer)
+  }
 }
 
 // ---- The all-done ping ----------------------------------------------
@@ -536,7 +626,7 @@ async function requeue($: E, id: string, output: string) {
   await update($, tasks, list =>
     list.map(t => {
       if (t.id !== id) return t
-      const { agentId: _a, startedAt: _s, endedAt: _e, ...rest } = t
+      const { agentId: _a, startedAt: _s, endedAt: _e, launchAskedAt: _l, launchAsks: _n, ...rest } = t
       return {
         ...rest,
         status: 'queued' as const,
@@ -644,7 +734,8 @@ async function resolveProject(
 
 function describeTask(t: Task, now: number, withOutput: boolean): string {
   const ran = t.startedAt ? fmtDuration((t.endedAt ?? now) - t.startedAt) : '-'
-  const head = `${t.id} [${t.status}] ${t.title} (${t.backend}, ${ran})`
+  const isStarting = t.status === 'running' && t.backend === 'agent' && !t.agentId && !!t.launchAskedAt
+  const head = `${t.id} [${isStarting ? 'running: waiting for the main session to launch it' : t.status}] ${t.title} (${t.backend}, ${ran})`
   if (!withOutput) return head
   return `${head}\n${t.output ? clip(t.output, 2000) : '(no output yet)'}`
 }
@@ -961,6 +1052,15 @@ export const register: Register = on => {
         })
       } else if (t.status === 'running' && t.agentId) {
         agentToTask.set(t.agentId, t.id)
+      } else if (t.status === 'running' && t.backend === 'agent') {
+        // Asked for but not launched before the reload: queue it to be asked again.
+        await update($, tasks, l =>
+          l.map(x => {
+            if (x.id !== t.id) return x
+            const { launchAskedAt: _l, launchAsks: _n, startedAt: _s, ...rest } = x
+            return { ...rest, status: 'queued' as const }
+          }),
+        )
       }
     }
 
@@ -968,7 +1068,7 @@ export const register: Register = on => {
       name: 'dispatch',
       isDeferred: false,
       description:
-        'Queue a task on the orchestrator dashboard. It runs as its own Claude session in the given project, in parallel with other tasks (up to the dashboard limit). Returns the task id. You are woken when it finishes; then call status to read the result.',
+        'Queue a task on the orchestrator dashboard. It runs as its own Claude session in the given project, in parallel with other tasks (up to the dashboard limit). Returns the task id. For an agent task, when it can start you get an [orchestrator] message asking you to launch it with the Agent tool: do so right away, exactly as the message says. You are woken when it finishes; then call status to read the result.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1144,6 +1244,56 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // ---- Agent tasks the main session launches -------------------------
+
+  // The session's Agent call described `orch-<id> ...` starts that task: run it in
+  // the project's folder, in the background, and track it. The prompt is the
+  // one the call carries (the one auto mode judged), never swapped.
+  on('agent.spawn', async ($, e, next) => {
+    const m = LAUNCH_TAG.exec(e.description ?? '')
+    if (!m || e.parentAgentId || e.resume || e.workflow || e.isTeammate) return next(e)
+    const task = (await read($, tasks)).find(t => t.id === m[1])
+    if (!task || task.backend !== 'agent') return next(e)
+    if (task.status !== 'running' || task.agentId) {
+      return { deny: `Orchestrator task ${task.id} is not waiting to start (it is ${task.agentId ? 'already running' : task.status}). Do not launch it again.` }
+    }
+    const project = (await read($, projects)).find(p => p.id === task.projectId)
+    if (!project) {
+      await finish($, task.id, 'failed', 'The project of this task no longer exists.')
+      return { deny: `The project of orchestrator task ${task.id} no longer exists.` }
+    }
+    // The Agent tool takes only model aliases: a task's full model id is set here.
+    const res = await next({ ...e, cwd: project.path, background: true, ...(task.model ? { model: task.model } : {}) })
+    try {
+      await onLaunched($, task, res)
+    } catch {
+      // The agent runs either way; turn.complete still settles it by agentId.
+    }
+    return res
+  }).catch(($, e, next) =>
+    // Skipped, the agent would start in the wrong folder: refuse it instead.
+    next.called ? next(e) : { deny: 'The orchestrator could not prepare this launch. Retry the task from the dashboard.' },
+  )
+
+  // The launch never reached agent.spawn: the person or auto mode refused the call.
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    const res = await next(e)
+    try {
+      const r = res as { deny?: string; isError?: boolean; result?: unknown }
+      const m = LAUNCH_TAG.exec(String((e as unknown as Record<string, unknown>).description ?? ''))
+      if (m && (r.deny !== undefined || r.isError)) {
+        const task = (await read($, tasks)).find(t => t.id === m[1])
+        if (task && task.status === 'running' && task.backend === 'agent' && !task.agentId) {
+          const why = r.deny ?? (typeof r.result === 'string' ? r.result : 'The Agent call failed.')
+          await finish($, task.id, 'failed', `The launch was refused: ${why}`)
+        }
+      }
+    } catch {
+      // Best effort: the launch check still settles a task that never started.
+    }
+    return res
+  }).catch(($, e, next) => next(e))
+
   // ---- Code changes ---------------------------------------------------
 
   // Every edit, the main session's and each agent's, goes to the HUD's diff view.
@@ -1220,7 +1370,12 @@ export const register: Register = on => {
         isNotify: true,
       },
     ])
-    return { result: `Queued task ${id} in ${project.name}.` }
+    const isAsked = input.backend !== 'process' && (await read($, settings)).agentLaunch !== 'plugin'
+    return {
+      result: isAsked
+        ? `Queued task ${id} in ${project.name}. When it can start, an [orchestrator] message will ask you to launch it with the Agent tool.`
+        : `Queued task ${id} in ${project.name}.`,
+    }
   })
 
   on('tool.call', { tool: `${TOOL}status` }, async ($, e) => {
@@ -1595,6 +1750,16 @@ export const register: Register = on => {
             value={String(cfg.maxParallel)}
             options={[1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16].map(n => ({ value: String(n), label: String(n) }))}
             onSelect={(value: string) => void setSettings({ maxParallel: Number(value) })}
+          />
+          <Select
+            key="agent-launch"
+            label="Start agent tasks"
+            value={cfg.agentLaunch === 'plugin' ? 'plugin' : 'session'}
+            options={[
+              { value: 'session', label: 'from the main session (works in auto mode)' },
+              { value: 'plugin', label: 'from the plugin (not in auto mode)' },
+            ]}
+            onSelect={(value: string) => void setSettings({ agentLaunch: value === 'plugin' ? 'plugin' : 'session' })}
           />
           <Select
             key="standby"
