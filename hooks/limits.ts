@@ -92,5 +92,22 @@ const LIMIT_NOTE =
   '\n\n(Note: an earlier run of this task was cut off by a usage limit. Check the working tree for partial progress before redoing any work.)'
 
 /** The prompt a resumed task runs with. */
-export const resumedPrompt = (prompt: string, interruptions: number | undefined) =>
+/**
+ * How many tasks may run at once: `maxParallel`, or fewer (`to`) while any
+ * usage window is at or above `atPercent`. 0 for `atPercent` turns it off.
+ */
+export function throttledMax(
+  maxParallel: number,
+  windows: readonly Window[],
+  atPercent: number,
+  to: number,
+): { max: number; isSlowed: boolean } {
+  if (!atPercent || atPercent <= 0) return { max: maxParallel, isSlowed: false }
+  const isHot = windows.some(w => w.percentUsed >= atPercent && w.percentUsed < 100)
+  if (!isHot) return { max: maxParallel, isSlowed: false }
+  const max = Math.max(1, Math.min(maxParallel, Math.round(to) || 1))
+  return { max, isSlowed: max < maxParallel }
+}
+
+export const resumedPrompt =(prompt: string, interruptions: number | undefined) =>
   interruptions ? prompt + LIMIT_NOTE : prompt

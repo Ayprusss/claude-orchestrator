@@ -1,6 +1,18 @@
 import { expect, test } from 'claude-code/testing'
 
-import { blockingWindow, looksLikeLimit, resetFromText, resumedPrompt } from './limits'
+import { blockingWindow, looksLikeLimit, resetFromText, resumedPrompt, throttledMax } from './limits'
+
+test('near a usage limit, fewer tasks run at once', async () => {
+  const hot = [{ kind: 'five_hour', percentUsed: 85 }]
+  const cool = [{ kind: 'five_hour', percentUsed: 40 }]
+  expect(throttledMax(6, hot, 80, 2)).toEqual({ max: 2, isSlowed: true })
+  expect(throttledMax(6, cool, 80, 2)).toEqual({ max: 6, isSlowed: false })
+  // Off, or already at or below the slowed count.
+  expect(throttledMax(6, hot, 0, 2)).toEqual({ max: 6, isSlowed: false })
+  expect(throttledMax(1, hot, 80, 2)).toEqual({ max: 1, isSlowed: false })
+  // 100% is standby's job, not this one.
+  expect(throttledMax(6, [{ kind: 'five_hour', percentUsed: 100 }], 80, 2).isSlowed).toBe(false)
+})
 
 const NOW = Date.parse('2026-10-25T12:00:00Z')
 

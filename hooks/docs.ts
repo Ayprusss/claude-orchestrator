@@ -253,6 +253,17 @@ One small-model call per finished task (none for short outputs or with summaries
 - **Permissions.** Headless process tasks cannot ask you for approval. Whatever the process args allow is what they can do.
 - **Mobile.** The mobile surface has no text inputs, so the New, Projects and Settings forms need the terminal or desktop surface.
 
+## Saving tokens
+
+Settings that keep many agents from draining your usage limits:
+
+- **Default task model / effort** (Sonnet, medium): used by any task queued without its own. Ask for Opus on the tasks that need it.
+- **Task report length** (150 words): every task is told to end with a short reply and put longer detail in a report file, so each finished task adds little to the main session's context.
+- **Slow down near the usage limit** (80%) and **Tasks at once when slowed** (2): past that share of a usage window, fewer tasks run at once. Standby still takes over at 100%.
+- **Briefs:** ${'`dispatch`'} takes ${'`reads`'}, a list of files and plan sections (${'`PLAN.md#Unit S`'}). The orchestrator writes the agent a short brief file with only those sections, so it does not read the whole plan. ${'`dispatch_batch`'} queues a fan-out with its shared context written once, to one file every task reads.
+- **Agents' whole-file reads** (40 KB): an orchestrator agent that reads a file larger than this in one go is told to search it first and read the part it needs. The main session is never limited.
+- When the main session dispatched a task and has not compacted since, the launch request names the dispatch prompt instead of repeating it. If the launched prompt does not carry it, the launch is refused and asked for again in full.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
