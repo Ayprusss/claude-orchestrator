@@ -59,7 +59,7 @@ test('an empty ledger has no goals, decisions or tasks', async () => {
 
 test('the module object matches the contract names', async () => {
   expect(Object.keys(ledgerModule).sort()).toEqual(
-    ['applyNote', 'applyTaskEvent', 'compactionInstructions', 'emptyLedger', 'pickCarryOver', 'renderSnapshot'],
+    ['adoptCarryOver', 'applyNote', 'applyTaskEvent', 'compactionInstructions', 'emptyLedger', 'pickCarryOver', 'renderSnapshot'],
   )
 })
 
