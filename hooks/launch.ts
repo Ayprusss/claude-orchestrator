@@ -16,6 +16,8 @@ export type LaunchSpec = {
   title: string
   agentType: string
   model: string
+  /** Effort level ('' = the session's default). */
+  effort: string
   folder: string
   /** The prompt the agent runs with, final (after any resume note). */
   prompt: string
@@ -30,6 +32,7 @@ export function launchRequest(specs: LaunchSpec[]): string {
       `- description: ${launchTag(s.id)} ${s.title.slice(0, 40)}`,
       `- subagent_type: ${s.agentType || 'general-purpose'}`,
       ...(s.model ? [`- model: ${s.model}`] : []),
+      ...(s.effort ? [`- effort: ${s.effort}`] : []),
       `- folder (set by the orchestrator): ${s.folder}`,
       '- prompt: everything between the two marker lines, verbatim',
       `<<<ORCH-PROMPT ${s.id}`,
@@ -40,7 +43,7 @@ export function launchRequest(specs: LaunchSpec[]): string {
   return (
     `[orchestrator] ${n} agent task${n === 1 ? ' is' : 's are'} ready to start. ` +
     `Launch ${n === 1 ? 'it' : 'each one'} now with the Agent tool${n === 1 ? '' : ', all in one turn'}, ` +
-    'using exactly the description, subagent_type and model given, and the prompt verbatim; ' +
+    'using exactly the description, subagent_type, model and effort given (pass effort as the `effort` parameter of the Agent tool; leave it out when a task has none), and the prompt verbatim; ' +
     'do not set a name. ' +
     'The orchestrator runs each in its folder, in the background, and wakes you when it finishes.\n\n' +
     blocks.join('\n\n')

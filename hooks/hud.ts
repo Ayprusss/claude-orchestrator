@@ -14,6 +14,8 @@ export type HudCommand =
       prompt: string
       backend: OrchBackend
       model: string
+      // '' or 'low' | 'medium' | 'high' | 'xhigh' | 'max' (HUD_CONTROLS_PLAN.md)
+      effort?: string
     }
   | { type: 'kill' | 'retry' | 'remove'; id: string }
   | { type: 'clear' }
@@ -23,9 +25,19 @@ export type HudCommand =
       isStandbyOnLimit?: boolean
       isDiffViewOn?: boolean
       isPingOn?: boolean
+      isHudPermissionsOn?: boolean
+      hudPermissionWaitSec?: number
     }
   | { type: 'ping' }
   | { type: 'resume' }
+  // hud-controls (HUD_CONTROLS_PLAN.md)
+  // The main session's model ('' = default) and effort level.
+  | { type: 'session-model'; model: string }
+  | { type: 'session-effort'; effort: string }
+  // A queued task's model and effort, before it starts.
+  | { type: 'task-config'; id: string; model: string; effort: string }
+  // Push the conversation's history to the HUD again.
+  | { type: 'history-load' }
 
 export type HudEvent = { type: string; [key: string]: unknown }
 export type HudPhase = 'idle' | 'thinking' | 'speaking' | 'tool'

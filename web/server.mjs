@@ -34,6 +34,10 @@ if (!/^[A-Za-z0-9]{16,}$/.test(TOKEN)) {
 // What a newly connected browser is sent first.
 const state = { snapshot: null, phase: { type: 'phase', phase: 'idle' }, messages: [], diffs: [], partial: '' }
 const clients = new Set()
+// Permission prompts waiting for the browser's answer: id -> { event, res, timer }.
+const pending = new Map()
+const MAX_PENDING = 20
+const PERM_MODES = new Set(['auto', 'plan', 'default', 'acceptEdits', 'dontAsk'])
 let port = WANT_PORT
 let lastHeard = Date.now()
 
@@ -63,7 +67,25 @@ function remember(event) {
       if (state.messages.length > HISTORY) state.messages.shift()
       if (event.role === 'assistant') state.partial = ''
       break
+    // A resumed conversation: its messages replace the kept history.
+    case 'history':
+      state.messages = Array.isArray(event.messages) ? event.messages.slice(-HISTORY) : []
+      break
   }
+}
+
+// Ends a pending permission prompt: answers the waiting plugin request and
+// tells the browsers to drop the card. A no-op once closed.
+function closePermission(id, answer, reason) {
+  const p = pending.get(id)
+  if (!p) return false
+  pending.delete(id)
+  clearTimeout(p.timer)
+  if (!p.res.writableEnded && !p.res.destroyed) {
+    send(p.res, 200, answer ? { answer } : { answer: null, reason })
+  }
+  broadcast({ type: 'permission-closed', id })
+  return true
 }
 
 function readBody(req, cap) {
@@ -106,7 +128,11 @@ function openBrowser(url) {
   }
 }
 
-const COMMANDS = new Set(['chat', 'dispatch', 'kill', 'retry', 'remove', 'clear', 'settings', 'resume', 'ping'])
+const COMMANDS = new Set([
+  'chat', 'dispatch', 'kill', 'retry', 'remove', 'clear', 'settings', 'resume', 'ping',
+  // hud-controls (HUD_CONTROLS_PLAN.md)
+  'session-model', 'session-effort', 'task-config', 'history-load',
+])
 
 const server = http.createServer(async (req, res) => {
   // Only this machine, by name: a page on another origin that resolves its
@@ -134,6 +160,15 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, html, 'text/html; charset=utf-8')
     }
 
+    // HUD modules: web/hud/<name>.js, by plain name only.
+    const mod = /^\/hud\/([a-z][a-z0-9-]*)\.js$/.exec(url.pathname)
+    if (req.method === 'GET' && mod) {
+      if (!queryOk) return send(res, 403, '// bad token', 'text/javascript; charset=utf-8')
+      const file = path.join(here, 'hud', `${mod[1]}.js`)
+      if (!fs.existsSync(file)) return send(res, 404, '// no such module', 'text/javascript; charset=utf-8')
+      return send(res, 200, fs.readFileSync(file, 'utf8'), 'text/javascript; charset=utf-8')
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/events') {
       if (!queryOk) return send(res, 403, { error: 'bad token' })
       res.writeHead(200, {
@@ -158,6 +193,50 @@ const server = http.createServer(async (req, res) => {
         broadcast(event)
       }
       return send(res, 200, { ok: true, clients: clients.size })
+    }
+
+    // A permission prompt from the plugin: held open until the browser
+    // answers or the wait ends. Never answers 'allow' on its own.
+    if (req.method === 'POST' && url.pathname === '/api/permission') {
+      if (!headerOk) return send(res, 403, { error: 'bad token' })
+      lastHeard = Date.now()
+      const body = JSON.parse(await readBody(req, MAX_COMMAND))
+      const id = typeof body?.id === 'string' ? body.id : ''
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || pending.has(id) || pending.size >= MAX_PENDING) {
+        return send(res, 200, { answer: null, reason: 'rejected' })
+      }
+      if (clients.size === 0) return send(res, 200, { answer: null, reason: 'no-hud' })
+      const waitMs = Math.max(1000, Math.min(Number(body.waitMs) || 60_000, 300_000))
+      const clipText = (v, n) => String(v ?? '').slice(0, n)
+      const event = {
+        type: 'permission',
+        id,
+        tool: clipText(body.tool, 80),
+        summary: clipText(body.summary, 240),
+        mode: clipText(body.mode, 40),
+        until: Date.now() + waitMs,
+      }
+      const timer = setTimeout(() => closePermission(id, null, 'timeout'), waitMs)
+      pending.set(id, { event, res, timer })
+      // The plugin gave up (hook ended): drop the card.
+      res.on('close', () => closePermission(id, null, 'gone'))
+      broadcast(event)
+      return
+    }
+
+    // The browser's answer to a pending prompt.
+    if (req.method === 'POST' && url.pathname === '/api/permission/answer') {
+      if (!headerOk) return send(res, 403, { error: 'bad token' })
+      const body = JSON.parse(await readBody(req, MAX_COMMAND))
+      const id = typeof body?.id === 'string' ? body.id : ''
+      if (!pending.has(id)) return send(res, 404, { error: 'no such prompt' })
+      if (body.behavior !== 'allow' && body.behavior !== 'deny') return send(res, 400, { error: 'bad behavior' })
+      const answer = { behavior: body.behavior }
+      if (body.behavior === 'allow' && typeof body.mode === 'string' && PERM_MODES.has(body.mode)) {
+        answer.mode = body.mode
+      }
+      closePermission(id, answer)
+      return send(res, 200, { ok: true })
     }
 
     if (req.method === 'POST' && url.pathname === '/api/command') {

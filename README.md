@@ -35,6 +35,15 @@ Run `/orchestrator` to open the pane.
 
 Run `/orchestrator-hud` (or press **HUD** in the pane) to open a browser dashboard: an animated orb you can talk to, by text or voice, with running tasks orbiting it, a live task list, and the main conversation streamed in. It needs Node.js 18+ on PATH. It runs on `127.0.0.1` only, and each request needs a per-install token. `/orchestrator-hud stop` shuts it down. The **HUD** page of the Docs tab has details.
 
+From the HUD you can also:
+- set the main session's model and effort
+- pick a model and effort for each task
+- see the permission mode
+- answer permission prompts, choosing a mode to switch to with **Shift+Tab**
+- see a resumed conversation's history in Comms
+
+Plugins can't change the mode on demand, so a mode switch takes effect when you answer a prompt in the HUD.
+
 ### Code changes
 
 The HUD shows each edit as a diff. A small window pops up beside the agent that made it, linked to it by a line, and Comms lists every change. Drag a window's edges or corner to resize it, and its title to move it. Close it with ✕, or turn pop-ups off in Settings. Edits by `process` tasks are not shown.

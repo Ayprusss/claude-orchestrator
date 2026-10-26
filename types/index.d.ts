@@ -16,6 +16,9 @@ export type OrchTask = {
   backend: OrchBackend
   model: string
   agentType: string
+  // Effort level for the task's agent or process: '' (its default) or
+  // 'low' | 'medium' | 'high' | 'xhigh' | 'max'.
+  effort?: string
   status: OrchStatus
   output: string
   agentId?: string
@@ -54,6 +57,10 @@ export type OrchSettings = OrchMemorySettings & {
   // Play a ping once the main session and every task are done.
   isPingOn: boolean
   agentLaunch: OrchAgentLaunch
+  // Permission prompts shown in the HUD (when a HUD tab is open), with this
+  // long to answer there before the terminal's own prompt takes over.
+  isHudPermissionsOn: boolean
+  hudPermissionWaitSec: number
 }
 
 export type OrchTab = 'sessions' | 'new' | 'projects' | 'memory' | 'settings' | 'docs'
