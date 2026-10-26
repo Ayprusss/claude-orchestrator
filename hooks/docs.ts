@@ -289,7 +289,7 @@ Projects and settings are kept across sessions. The task list lives with the cur
 
 A visual dashboard for the orchestrator in your browser: an animated orb you talk to, with every task orbiting it.
 
-Open it with ${'`/orchestrator-hud`'}, or the **HUD** button at the end of this pane's tab row. Stop it with ${'`/orchestrator-hud stop`'}.
+Open it with ${'`/hud`'} (short for ${'`/orchestrator-hud`'}), or the **HUD** button at the end of this pane's tab row. Stop it with ${'`/hud stop`'}.
 
 ## What it shows
 

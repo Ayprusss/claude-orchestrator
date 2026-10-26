@@ -69,6 +69,12 @@ export const register: Register = on => {
       name: 'orchestrator-hud',
       description: 'Open the orchestrator HUD in your browser (add "stop" to shut it down)',
     })
+    // A short name for the same command.
+    await $.command.register({
+      name: 'hud',
+      description: 'Orchestrator HUD: open it in your browser (add "stop" to shut it down)',
+      argumentHint: '[stop]',
+    })
 
     await loadStored($)
     await recoverTasks($)
@@ -95,6 +101,9 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'orchestrator-hud' }, async ($, e) => ({
+    text: await runHudCommand($, e.args),
+  }))
+  on('command.run', { command: 'hud' }, async ($, e) => ({
     text: await runHudCommand($, e.args),
   }))
 

@@ -33,7 +33,7 @@ Run `/orchestrator` to open the pane.
 
 ### HUD
 
-Run `/orchestrator-hud` (or press **HUD** in the pane) to open a browser dashboard: an animated orb you can talk to, by text or voice, with running tasks orbiting it, a live task list, and the main conversation streamed in. It needs Node.js 18+ on PATH. It runs on `127.0.0.1` only, and each request needs a per-install token. `/orchestrator-hud stop` shuts it down. The **HUD** page of the Docs tab has details.
+Run `/hud` (short for `/orchestrator-hud`, or press **HUD** in the pane) to open a browser dashboard: an animated orb you can talk to, by text or voice, with running tasks orbiting it, a live task list, and the main conversation streamed in. It needs Node.js 18+ on PATH. It runs on `127.0.0.1` only, and each request needs a per-install token. `/hud stop` shuts it down. The **HUD** page of the Docs tab has details.
 
 From the HUD you can also:
 - set the main session's model and effort
