@@ -2,7 +2,7 @@
 
 A plan to give the orchestrator a memory that survives compaction, `/clear`, reloads and new sessions, and to give the agents it dispatches what earlier tasks in the same project learned.
 
-Status: **plan, not built**. Target plugin version: `0.6.0` (phase 1) through `0.8.0` (phase 3).
+Status: **plan, not built**, except §17 (starting agent tasks in auto mode), which is built. Target plugin version: `0.6.0` (phase 1) through `0.8.0` (phase 3).
 
 ---
 
@@ -55,7 +55,7 @@ The harness adds three things, in three phases:
 | Projects | `$.store` key `projects` (`hooks/register.tsx` `saveProjects`) | Across sessions |
 | Settings | `$.store` key `settings` (`saveSettings`) | Across sessions |
 | HUD token | `$.store` key `hudToken` | Across sessions |
-| Tasks | `tasks` atom, `$.state` only (`register.tsx`, shape `orch-tasks-1`) | Hot reload only |
+| Tasks | `tasks` atom, `$.state` only (`register.tsx`, shape `orch-tasks-2`) | Hot reload only |
 | Task output | `output`, clipped to the last `OUTPUT_CAP` = 8000 characters | Same as tasks |
 | HUD messages | In memory in `web/server.mjs` and the queue in `hooks/hud.ts` (last 400 events) | Nothing |
 | Edits | `reportDiff` streams Edit/Write diffs to the HUD, then drops them | Nothing |
@@ -302,7 +302,7 @@ The `tasks` atom stays session-scoped (restoring queued tasks into a new session
 | `isMemoryOn` | `boolean` | `true` |
 | `memoryDir` | `string` | `''` (empty = the default folder) |
 
-`OrchTask` gains `why?: string`. New atom `ledger` (`OrchLedger`). Shape tags: settings `orch-settings-4` → `orch-settings-5`, tasks `orch-tasks-1` → `orch-tasks-2`. Stored settings already merge over `DEFAULT_SETTINGS`, so older stored settings keep working.
+`OrchTask` gains `why?: string`. New atom `ledger` (`OrchLedger`). Shape tags: settings `orch-settings-5` → `orch-settings-6`, tasks `orch-tasks-2` → `orch-tasks-3` (the `-5`/`-2` tags went to the agent-launch change in §17). Stored settings already merge over `DEFAULT_SETTINGS`, so older stored settings keep working.
 
 ### 7.7 Acceptance criteria
 
@@ -393,7 +393,7 @@ No brief is added when the project has no memory yet, or when memory is off.
 | `isTranscriptKept` | `boolean` | `false` |
 | `recallBudgetChars` | `number` | `3000` |
 
-`OrchTask` gains `summary?: string`, `outcome?: string`, `files?: string[]`. Settings shape → `orch-settings-6`, tasks → `orch-tasks-3` (or fold these into phase 1's bump if both ship together).
+`OrchTask` gains `summary?: string`, `outcome?: string`, `files?: string[]`. Settings shape → `orch-settings-7`, tasks → `orch-tasks-4` (or fold these into phase 1's bump if both ship together).
 
 ### 8.5 Acceptance criteria
 
@@ -613,3 +613,68 @@ The pilot is to build this with the orchestrator itself, dispatching subagents. 
 - Run `claude plugin validate .` and `claude plugin test .` before finishing, and report the results.
 - Finish with: what was built, the test results, any open question answered (with evidence), and anything left undone.
 - The main session merges units in dependency order and runs the full test suite after each merge.
+
+### 16.1 The concurrent run (all phases at once)
+
+To run all three phases at the same time, the pilot uses six units instead of the phase-by-phase split above. They can run in parallel because every module codes against one shared interface file, `hooks/memory/contract.ts`, committed on the `memory-harness` branch before the worktrees were made. No unit edits `hooks/register.tsx`; the main session merges the six branches and does all the wiring at the end.
+
+| Unit | Worktree / branch | Owns |
+|---|---|---|
+| A storage | `../orch-mem-wt/a-storage` · `mem/a-storage` | `hooks/memory/paths.ts`, `files.ts` + tests |
+| B ledger | `../orch-mem-wt/b-ledger` · `mem/b-ledger` | `hooks/memory/ledger.ts` + test |
+| C summarize | `../orch-mem-wt/c-summarize` · `mem/c-summarize` | `hooks/memory/scrub.ts`, `summarize.ts` + tests |
+| D recall | `../orch-mem-wt/d-recall` · `mem/d-recall` | `hooks/memory/search.ts`, `recall.ts` + tests |
+| E consolidate | `../orch-mem-wt/e-consolidate` · `mem/e-consolidate` | `hooks/memory/consolidate.ts` + test |
+| F ui | `../orch-mem-wt/f-ui` · `mem/f-ui` | `hooks/memory/pane.tsx`, `types/index.d.ts`, `hooks/docs.ts`, `README.md` + test |
+
+**Keeping overlapping units in touch.** A coordination board at `../orch-mem-coord/README.md` lists the pairs most likely to overlap (D↔E on the knowledge format, C↔E on what a fact is, A↔E on locks, B↔F on ledger fields, C↔D on summary length). Each unit writes only its own notes file there (`<unit>.md`, first line `Status: working | blocked | done`), reads its peers' files, and answers questions addressed to it before finishing. Contract changes are requested in the notes file, never made in `contract.ts`; the main session decides and relays.
+
+**Merge order:** A → B → C → D → E (swap its local `scrub` stub for C's) → F, then the `register.tsx` wiring for all three phases, then the full test suite.
+
+## 17. Starting agent tasks in auto mode (prerequisite, built)
+
+**What the pilot found.** The first concurrent dispatch failed at once for every task: *"The server-side auto mode classifier gave no verdict for Agent: the request that produced this action did not ask for one."* Auto mode judges each action against what the person asked for. `launch()` started agents with `$.agent.spawn` from plugin code, which has no request behind it, so auto mode refused every launch. Manual mode works, but the orchestrator needs to run unattended, so it has to work in auto mode too.
+
+**Options considered.**
+
+| # | Option | Verdict |
+|---|---|---|
+| 1 | The main session launches each agent with its own Agent tool; the plugin picks the launch up through its hooks | **Built** (below) |
+| 2 | Run work as `process` tasks with `--permission-mode auto` in the process args, so each `claude -p` run judges its own actions | Works today, as a fallback. These tasks show only an output tail and no diffs |
+| 3 | Add `Agent` to `permissions.allow`, which may let plugin launches skip auto mode's check | **To test later** (see below) |
+
+### 17.1 How option 1 works
+
+1. `pump` gives an agent task its slot as before (status `running`), but when Settings **Start agent tasks** is *from the main session* (the default, `agentLaunch: 'session'`), it does not spawn the agent. It collects every task that became ready in that pass.
+2. `askLaunches` sends the main session **one** `[orchestrator]` message for all of them (`hooks/launch.ts`, `launchRequest`). For each task it gives a `description` starting with the tag `orch-<task id>`, the `subagent_type`, the model, the project folder, and the full prompt between marker lines, to pass verbatim. The task records `launchAskedAt` and `launchAsks`.
+3. The main session calls the Agent tool for each task, in one turn. Auto mode judges that call like any other, with the real prompt in it.
+4. The plugin's `agent.spawn` hook sees the `orch-<id>` tag, checks that the task is waiting, and calls `next` with the project folder as `cwd`, `background: true` (so the main turn is not blocked), and the task's model. It never changes the prompt: what auto mode judged is what runs. It then records the `agentId`, and the existing `turn.complete` handling finishes the task as before.
+5. Edge cases:
+   - **Duplicate launch:** a second launch of the same task is refused.
+   - **Refused launch:** when the person declines the Agent call or auto mode blocks it, a `tool.call` hook on `Agent` fails the task with the reason.
+   - **No launch:** `checkLaunches` asks again every 3 minutes while the main session is idle, and fails the task after 3 asks.
+   - **Reload:** a task that was asked for but not launched goes back to `queued` and is asked for again.
+   - **Hook error:** if the spawn hook throws before calling `next`, its `.catch` refuses the launch rather than let the agent start in the wrong folder.
+
+**Why a description tag and not the Agent tool's `name`:** a named agent can become a teammate, and a teammate always runs in the session's folder, so the `cwd` the hook sets would be ignored.
+
+**Settings:** **Start agent tasks**: *from the main session (works in auto mode)* / *from the plugin (not in auto mode)*. Shape tags: settings `orch-settings-5`, tasks `orch-tasks-2`.
+
+**Files:** `hooks/launch.ts` (+ `launch.test.ts`), `hooks/register.tsx` (`pump`, `askLaunches`, `checkLaunches`, `onLaunched`, the `agent.spawn` and `tool.call{Agent}` hooks, the `dispatch` text, `status`, the Settings row), `types/index.d.ts`, `hooks/docs.ts` (Backends, Let Claude orchestrate, Troubleshooting), `README.md` (Auto mode).
+
+**Cost:** one extra short turn per batch of ready tasks, plus the output tokens to repeat each prompt into the Agent call.
+
+**Still to verify in a live session:**
+
+- Auto mode approves the session's Agent call in a turn started by the `[orchestrator]` message.
+- The `cwd` set by the hook is honored for a background agent.
+- The tool result the main session sees still reports a background launch.
+
+### 17.2 Option 3, to test later
+
+Add `"Agent"` to `permissions.allow` in settings, set **Start agent tasks** to *from the plugin*, and dispatch in auto mode. If the launch runs, document it as a lighter alternative (no extra turn and no repeated prompt), with the trade-off that every Agent launch, not only the orchestrator's, then skips auto mode's check. If it is still refused, record that and keep option 1 as the only auto-mode path.
+
+### 17.3 Other pilot findings
+
+- **Duplicate wake-ups:** a task that never started still sends its own "finished: failed" wake-up after `dispatch` already returned, which made seven extra turns in the pilot. Fix with the memory work: report a launch failure that happens before the agent starts back to `dispatch` directly (or fold such failures into one message), with no wake-up per task.
+- **Installed copy vs. working copy:** the plugin runs from its marketplace install, not this working copy. A change reaches a session only through a new commit or version and `claude plugin update` + `/reload-plugins`, or by starting a session with `claude --plugin-dir <this repo>`.
