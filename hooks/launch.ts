@@ -21,6 +21,58 @@ export type LaunchSpec = {
   folder: string
   /** The prompt the agent runs with, final (after any resume note). */
   prompt: string
+  /**
+   * Set when the main session already has the task's prompt in context (it
+   * dispatched it since the last compaction): the request then names the
+   * text to put before and after that prompt instead of repeating it.
+   */
+  known?: { before: string; after: string }
+}
+
+/**
+ * How `full` is built around the dispatch prompt `original`, or undefined
+ * when `original` is not in it verbatim (then the full prompt is sent).
+ */
+export function splitKnown(full: string, original: string): { before: string; after: string } | undefined {
+  if (!original.trim()) return undefined
+  const i = full.indexOf(original)
+  if (i === -1) return undefined
+  return { before: full.slice(0, i), after: full.slice(i + original.length) }
+}
+
+const squash = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+/** Whether a launched prompt carries the dispatch prompt (whitespace aside). */
+export function promptMatches(launched: string, original: string): boolean {
+  return squash(launched).includes(squash(original))
+}
+
+/** The note asking a task for a short final reply; '' when the cap is off. */
+export function reportNote(words: number, reportPath?: string): string {
+  if (!words || words <= 0) return ''
+  return (
+    `\n\nWhen you finish, reply in at most ${Math.round(words)} words: the outcome, the files you changed, and anything left undone or blocking.` +
+    (reportPath ? ` Put longer detail in ${reportPath} and give that path.` : '')
+  )
+}
+
+function promptLines(s: LaunchSpec): string[] {
+  if (!s.known) {
+    return [
+      '- prompt: everything between the two marker lines, verbatim',
+      `<<<ORCH-PROMPT ${s.id}`,
+      s.prompt,
+      `ORCH-PROMPT ${s.id}>>>`,
+    ]
+  }
+  const before = s.known.before.trim() ? s.known.before : ''
+  const after = s.known.after.trim() ? s.known.after : ''
+  return [
+    `- prompt: the exact prompt you passed to dispatch for this task ("${s.title}"), verbatim` +
+      (before || after ? ', with the text between the marker lines below added' : ''),
+    ...(before ? ['  before it:', `<<<ORCH-BEFORE ${s.id}`, before, `ORCH-BEFORE ${s.id}>>>`] : []),
+    ...(after ? ['  after it:', `<<<ORCH-AFTER ${s.id}`, after, `ORCH-AFTER ${s.id}>>>`] : []),
+  ]
 }
 
 /** The [orchestrator] message asking the main session to launch these tasks. */
@@ -34,10 +86,7 @@ export function launchRequest(specs: LaunchSpec[]): string {
       ...(s.model ? [`- model: ${s.model}`] : []),
       ...(s.effort ? [`- effort: ${s.effort}`] : []),
       `- folder (set by the orchestrator): ${s.folder}`,
-      '- prompt: everything between the two marker lines, verbatim',
-      `<<<ORCH-PROMPT ${s.id}`,
-      s.prompt,
-      `ORCH-PROMPT ${s.id}>>>`,
+      ...promptLines(s),
     ].join('\n'),
   )
   return (

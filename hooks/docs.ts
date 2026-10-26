@@ -253,6 +253,15 @@ One small-model call per finished task (none for short outputs or with summaries
 - **Permissions.** Headless process tasks cannot ask you for approval. Whatever the process args allow is what they can do.
 - **Mobile.** The mobile surface has no text inputs, so the New, Projects and Settings forms need the terminal or desktop surface.
 
+## Saving tokens
+
+Settings that keep many agents from draining your usage limits:
+
+- **Default task model / effort** (Sonnet, medium): used by any task queued without its own. Ask for Opus on the tasks that need it.
+- **Task report length** (150 words): every task is told to end with a short reply and put longer detail in a report file, so each finished task adds little to the main session's context.
+- **Slow down near the usage limit** (80%) and **Tasks at once when slowed** (2): past that share of a usage window, fewer tasks run at once. Standby still takes over at 100%.
+- When the main session dispatched a task and has not compacted since, the launch request names the dispatch prompt instead of repeating it. If the launched prompt does not carry it, the launch is refused and asked for again in full.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |

@@ -1,6 +1,37 @@
 import { expect, test } from 'claude-code/testing'
 
-import { LAUNCH_TAG, launchRequest, launchTag } from './launch'
+import { LAUNCH_TAG, launchRequest, launchTag, promptMatches, reportNote, splitKnown } from './launch'
+
+test('a known prompt is named, not repeated; additions go in markers', async () => {
+  const original = 'Refactor the parser.\nKeep the API.'
+  const full = `BRIEF\n\n${original}${reportNote(150, '/m/reports/abc123.md')}`
+  const known = splitKnown(full, original)
+  expect(known?.before).toBe('BRIEF\n\n')
+  const text = launchRequest([
+    { id: 'abc123', title: 'Refactor', agentType: '', model: 'sonnet', effort: 'medium', folder: '/w', prompt: full, ...(known ? { known } : {}) },
+  ])
+  expect(text).toContain('the exact prompt you passed to dispatch for this task ("Refactor")')
+  expect(text).not.toContain('Keep the API.')
+  expect(text).toContain('<<<ORCH-BEFORE abc123\nBRIEF')
+  expect(text).toContain('at most 150 words')
+  expect(text).toContain('/m/reports/abc123.md')
+})
+
+test('a prompt not found verbatim is sent in full', async () => {
+  expect(splitKnown('something else', 'Refactor the parser.')).toBeUndefined()
+  expect(splitKnown('anything', '   ')).toBeUndefined()
+})
+
+test('a launched prompt matches when it carries the dispatch prompt, whitespace aside', async () => {
+  expect(promptMatches('BRIEF\n\nRefactor   the parser.\nKeep the API.\n\nWhen you finish…', 'Refactor the parser.\nKeep the API.')).toBe(true)
+  expect(promptMatches('Refactor the parser.', 'Refactor the parser.\nKeep the API.')).toBe(false)
+})
+
+test('the report note names the word cap and the file; 0 turns it off', async () => {
+  expect(reportNote(0)).toBe('')
+  expect(reportNote(150)).toContain('at most 150 words')
+  expect(reportNote(150)).not.toContain('Put longer detail')
+})
 
 const SPEC = {
   id: 'abc123',

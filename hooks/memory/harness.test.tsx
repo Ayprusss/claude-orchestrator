@@ -96,7 +96,7 @@ test('dispatch keeps why on the task and in the ledger', async ($, on) => {
   expect(ledger.tasks[0]?.projectKey).toMatch(/^demo-[0-9a-f]{8}$/)
 })
 
-test('dispatch keeps a task model and effort; a bad effort is dropped', async ($, on) => {
+test('dispatch keeps a task model and effort; a bad effort falls back to the defaults', async ($, on) => {
   session(on)
   const q = await call($, {
     tool: 'mcp__orchestrator__dispatch',
@@ -116,7 +116,10 @@ test('dispatch keeps a task model and effort; a bad effort is dropped', async ($
     effort: 'ultra; rm -rf /',
   })
   const id2 = /Queued task ([a-z0-9]{6})/.exec(text(q2))?.[1]
-  expect(text(await call($, { tool: 'mcp__orchestrator__status', id: id2 }))).not.toContain('effort')
+  // A bad effort is dropped, and the task gets the Settings defaults instead.
+  const st2 = text(await call($, { tool: 'mcp__orchestrator__status', id: id2 }))
+  expect(st2).toContain('Model: sonnet · effort medium')
+  expect(st2).not.toContain('ultra')
 })
 
 test('remember and memory_search find a fact; forget hides it', async ($, on) => {

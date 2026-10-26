@@ -17,7 +17,7 @@ import { buildDiff } from './diffs'
 import { DOCS } from './docs'
 import * as hud from './hud'
 import type { HudCommand } from './hud'
-import { LAUNCH_TAG, launchRequest } from './launch'
+import { LAUNCH_TAG, launchRequest, promptMatches, reportNote, splitKnown } from './launch'
 import type { LaunchSpec } from './launch'
 import { DEFAULT_MEMORY_SETTINGS } from './memory/contract'
 import {
@@ -43,6 +43,7 @@ import {
   remember as memRemember,
   resumePending as memResumePending,
   saveNow as memSaveNow,
+  memoryRoot as memMemoryRoot,
   setMemoryView as memSetMemoryView,
   tabData as memTabData,
   withMemory as memWithMemory,
@@ -64,6 +65,7 @@ import {
   RECHECK_MS,
   RESUME_GRACE_MS,
   blockingWindow,
+  throttledMax,
   isLimitError,
   looksLikeLimit,
   resetFromText,
@@ -89,6 +91,11 @@ const DEFAULT_SETTINGS: Settings = {
   agentLaunch: 'session',
   isHudPermissionsOn: true,
   hudPermissionWaitSec: 60,
+  reportWords: 150,
+  defaultTaskModel: 'sonnet',
+  defaultTaskEffort: 'medium',
+  throttleAtPercent: 80,
+  throttledParallel: 2,
   ...DEFAULT_MEMORY_SETTINGS,
 }
 const DEFAULT_VIEW: View = { tab: 'sessions', selected: '', docPage: 'start' }
@@ -114,12 +121,12 @@ const projects = atom(
 const tasks = atom(
   { plugin: 'orchestrator', key: 'tasks' } as const,
   [] as Task[],
-  { shape: 'orch-tasks-4' },
+  { shape: 'orch-tasks-5' },
 )
 const settings = atom(
   { plugin: 'orchestrator', key: 'settings' } as const,
   DEFAULT_SETTINGS,
-  { shape: 'orch-settings-7' },
+  { shape: 'orch-settings-8' },
 )
 const view = atom(
   { plugin: 'orchestrator', key: 'view' } as const,
@@ -156,6 +163,22 @@ const killed = new Set<string>()
 const agentToTask = new Map<string, string>()
 const unclaimed = new Map<string, { answer: string; status: TaskStatus }>()
 let isPumping = false
+// The main session's context: a new value at load, at each compaction and at
+// /clear. A task dispatched under the current value has its prompt in context.
+let contextEpoch = Math.random().toString(36).slice(2, 10)
+const newContextEpoch = () => {
+  contextEpoch = Math.random().toString(36).slice(2, 10)
+}
+// Fewer tasks at once while a usage window is past the threshold.
+let isSlowed = false
+// Tasks re-asked with the full prompt after a launch that did not carry it.
+const reasked = new Set<string>()
+
+/** The note asking a task for a short final reply, with its report file. */
+function taskReportNote(cfg: Settings, taskId: string): string {
+  const root = memMemoryRoot()
+  return reportNote(cfg.reportWords ?? 150, root ? `${root}/reports/${taskId}.md` : undefined)
+}
 // Agents that StopFailure reported out of tokens, claimed at their turn.complete.
 const limitedAgents = new Set<string>()
 let recheckTimer: { cancel: () => void } | undefined
@@ -239,7 +262,7 @@ async function refreshStatus($: E) {
     $.ui.status(`orch: usage limit, standby (${run} running, ${wait} queued)`)
     return
   }
-  $.ui.status(run + wait === 0 ? undefined : `orch: ${run} running, ${wait} queued`)
+  $.ui.status(run + wait === 0 ? undefined : `orch: ${run} running, ${wait} queued${isSlowed && wait ? ', slowed' : ''}`)
 }
 
 async function saveProjects($: E) {
@@ -308,7 +331,7 @@ async function launch($: E, task: Task) {
     return
   }
 
-  const prompt = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions)
+  const prompt = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions) + taskReportNote(cfg, task.id)
   if (task.backend === 'agent') {
     try {
       const res = await $.agent.spawn({
@@ -394,7 +417,11 @@ async function pump($: E) {
       ])
       const running = list.filter(t => t.status === 'running').length
       const next = list.find(t => t.status === 'queued')
-      if (!next || running >= cfg.maxParallel) break
+      if (!next) break
+      // Near a usage limit, run fewer at once (standby still takes over at 100%).
+      const slow = throttledMax(cfg.maxParallel, cfg.throttleAtPercent ? await usageWindows($) : [], cfg.throttleAtPercent ?? 0, cfg.throttledParallel ?? 2)
+      isSlowed = slow.isSlowed
+      if (running >= slow.max) break
       if (cfg.isStandbyOnLimit !== false) {
         if (lim.isLimited) break
         // Don't start work the account cannot pay for.
@@ -434,6 +461,10 @@ async function askLaunches($: E, list: Task[]) {
       continue
     }
     await setTask($, task.id, { launchAskedAt: now, launchAsks: (task.launchAsks ?? 0) + 1 })
+    const full = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions) + taskReportNote(cfg, task.id)
+    // The session dispatched it and has not compacted since: name its prompt, do not repeat it.
+    const isKnown = task.isNotify && !task.isFullLaunch && task.contextEpoch === contextEpoch
+    const known = isKnown ? splitKnown(full, task.prompt) : undefined
     specs.push({
       id: task.id,
       title: task.title,
@@ -441,7 +472,8 @@ async function askLaunches($: E, list: Task[]) {
       model: task.model,
       effort: normalizeEffort(task.effort),
       folder: project.path,
-      prompt: resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions),
+      prompt: full,
+      ...(known ? { known } : {}),
     })
   }
   if (!specs.length) return
@@ -572,13 +604,22 @@ type NewTask = {
 
 async function addTasks($: E, specs: NewTask[]): Promise<string[]> {
   const now = await $.clock.now()
-  const made: Task[] = specs.map(s => ({
-    ...s,
-    id: uid(),
-    status: 'queued',
-    output: '',
-    createdAt: now,
-  }))
+  const cfg = await read($, settings)
+  const made: Task[] = specs.map(s => {
+    // Tasks with no model or effort of their own get the defaults from Settings.
+    const model = s.model || cfg.defaultTaskModel || ''
+    const effort = s.effort || cfg.defaultTaskEffort || ''
+    return {
+      ...s,
+      model,
+      ...(effort ? { effort } : {}),
+      ...(s.isNotify ? { contextEpoch } : {}),
+      id: uid(),
+      status: 'queued' as const,
+      output: '',
+      createdAt: now,
+    }
+  })
   await update($, tasks, list => [...list, ...made].slice(-200))
   const projs = await read($, projects)
   await memReady($)
@@ -1432,7 +1473,10 @@ export const register: Register = on => {
       // Compact as asked.
     }
     const res = await next({ ...e, ...(instructions === undefined ? {} : { instructions }) })
-    if (res.messages) await memAfterCompact($).catch(() => undefined)
+    if (res.messages) {
+      newContextEpoch()
+      await memAfterCompact($).catch(() => undefined)
+    }
     return res
   })
 
@@ -1440,6 +1484,7 @@ export const register: Register = on => {
     try {
       await memSaveNow($)
       // /clear goes on under a new session id, and no session.start fires for it.
+      if (e.reason === 'clear') newContextEpoch()
       if (e.reason === 'clear') $.clock.after(300, () => void memOnClear($).catch(() => undefined))
     } catch {
       // Exits stay fast; the ledger was saved on its last change.
@@ -1531,6 +1576,20 @@ export const register: Register = on => {
       await finish($, task.id, 'failed', 'The project of this task no longer exists.')
       return { deny: `The project of orchestrator task ${task.id} no longer exists.` }
     }
+    // A request that named the dispatch prompt: the launch must carry it. If
+    // it does not, refuse it and ask again with the prompt in full.
+    const wasKnown = task.isNotify && !task.isFullLaunch && task.contextEpoch === contextEpoch
+    if (wasKnown && !promptMatches(e.prompt, task.prompt)) {
+      reasked.add(task.id)
+      await setTask($, task.id, { isFullLaunch: true })
+      $.clock.after(500, () => {
+        void read($, tasks).then(l => {
+          const t = l.find(x => x.id === task.id)
+          if (t && t.status === 'running' && !t.agentId) void askLaunches($, [t])
+        })
+      })
+      return { deny: `The prompt for orchestrator task ${task.id} did not match its dispatch prompt. A new launch request with the full prompt follows; launch from that.` }
+    }
     // The Agent tool takes only model aliases: a task's full model id is set here.
     const res = await next({ ...e, cwd: project.path, background: true, ...(task.model ? { model: task.model } : {}) })
     try {
@@ -1552,7 +1611,9 @@ export const register: Register = on => {
       const m = LAUNCH_TAG.exec(String((e as unknown as Record<string, unknown>).description ?? ''))
       if (m && (r.deny !== undefined || r.isError)) {
         const task = (await read($, tasks)).find(t => t.id === m[1])
-        if (task && task.status === 'running' && task.backend === 'agent' && !task.agentId) {
+        if (task && reasked.delete(task.id)) {
+          // Refused on purpose: a full-prompt request is on its way.
+        } else if (task && task.status === 'running' && task.backend === 'agent' && !task.agentId) {
           const why = r.deny ?? (typeof r.result === 'string' ? r.result : 'The Agent call failed.')
           await finish($, task.id, 'failed', `The launch was refused: ${why}`)
         }
@@ -2115,6 +2176,51 @@ export const register: Register = on => {
               { value: 'plugin', label: 'from the plugin (not in auto mode)' },
             ]}
             onSelect={(value: string) => void setSettings({ agentLaunch: value === 'plugin' ? 'plugin' : 'session' })}
+          />
+          <Select
+            key="default-task-model"
+            label="Default task model"
+            value={cfg.defaultTaskModel ?? ''}
+            options={MODEL_CHOICES.map(c => ({ value: c.id, label: c.id ? c.label : "Claude Code's default" }))}
+            onSelect={(value: string) => void setSettings({ defaultTaskModel: value })}
+          />
+          <Select
+            key="default-task-effort"
+            label="Default task effort"
+            value={cfg.defaultTaskEffort ?? ''}
+            options={[{ value: '', label: "Claude Code's default" }, ...EFFORT_LEVELS.map(x => ({ value: x, label: x }))]}
+            onSelect={(value: string) => void setSettings({ defaultTaskEffort: value })}
+          />
+          <Select
+            key="report-words"
+            label="Task report length"
+            value={String(cfg.reportWords ?? 150)}
+            options={[
+              { value: '100', label: 'at most 100 words' },
+              { value: '150', label: 'at most 150 words' },
+              { value: '300', label: 'at most 300 words' },
+              { value: '0', label: 'no limit' },
+            ]}
+            onSelect={(value: string) => void setSettings({ reportWords: Number(value) })}
+          />
+          <Select
+            key="throttle-at"
+            label="Slow down near the usage limit"
+            value={String(cfg.throttleAtPercent ?? 80)}
+            options={[
+              { value: '70', label: 'at 70% of a window' },
+              { value: '80', label: 'at 80% of a window' },
+              { value: '90', label: 'at 90% of a window' },
+              { value: '0', label: 'off' },
+            ]}
+            onSelect={(value: string) => void setSettings({ throttleAtPercent: Number(value) })}
+          />
+          <Select
+            key="throttled-parallel"
+            label="Tasks at once when slowed"
+            value={String(cfg.throttledParallel ?? 2)}
+            options={[1, 2, 3, 4].map(n => ({ value: String(n), label: String(n) }))}
+            onSelect={(value: string) => void setSettings({ throttledParallel: Number(value) })}
           />
           <Select
             key="standby"

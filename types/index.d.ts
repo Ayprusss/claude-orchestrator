@@ -30,6 +30,12 @@ export type OrchTask = {
   // it was last asked, and how many times.
   launchAskedAt?: number
   launchAsks?: number
+  // The main session's context when it dispatched the task: while it is
+  // unchanged (no compaction or /clear since), the launch request names the
+  // dispatch prompt instead of repeating it. Unset for HUD- or pane-queued tasks.
+  contextEpoch?: string
+  // The launched prompt did not carry the dispatch prompt: ask with it in full.
+  isFullLaunch?: boolean
   // One line on why the task exists (dispatch's optional `why`), kept in the ledger.
   why?: string
   // Set at finish from the task's summary (memory phase 2): the one-paragraph
@@ -61,6 +67,15 @@ export type OrchSettings = OrchMemorySettings & {
   // long to answer there before the terminal's own prompt takes over.
   isHudPermissionsOn: boolean
   hudPermissionWaitSec: number
+  // Token savings (TOKEN_SAVINGS_PLAN.md).
+  // A task's final reply: at most this many words (0 = no limit).
+  reportWords: number
+  // Model and effort for tasks queued without their own ('' = Claude Code's default).
+  defaultTaskModel: string
+  defaultTaskEffort: string
+  // At or above this % of a usage window (0 = off), run at most throttledParallel tasks.
+  throttleAtPercent: number
+  throttledParallel: number
 }
 
 export type OrchTab = 'sessions' | 'new' | 'projects' | 'memory' | 'settings' | 'docs'
