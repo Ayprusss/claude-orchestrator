@@ -1,6 +1,5 @@
 // Shared contract for the memory harness (see MEMORY_HARNESS_PLAN.md).
-// Every memory module codes against these types and signatures. Do not edit
-// this file inside a work unit: ask for a change in your coordination notes.
+// Every memory module codes against these types and signatures.
 //
 // Modules take small "ports" instead of the whole engine interface, so tests
 // can pass in-memory fakes (tests run with no fs, network or process).
@@ -198,6 +197,8 @@ export type LedgerModule = {
   applyTaskEvent: (ledger: Ledger, ev: LedgerTaskEvent, now: number) => Ledger
   /** Returns the new ledger and the tool's reply text (with the id). Invalid input leaves the ledger as is. */
   applyNote: (ledger: Ledger, input: NoteInput, now: number, newId: () => string) => { ledger: Ledger; reply: string }
+  /** Copies the carried ledger's open goals (ids kept) into this one and sets carriedFrom. */
+  adoptCarryOver: (ledger: Ledger, carried: Ledger, now: number) => Ledger
   /** Newest other ledger with open goals or unfinished tasks, under 7 days old. */
   pickCarryOver: (ledgers: Ledger[], currentSessionId: string, now: number) => Ledger | undefined
   /** The system-prompt section text (plan §7.2), at most `cap` characters; '' when there is nothing to show. */
@@ -236,6 +237,12 @@ export type SummaryResult = {
   facts: Fact[]
   /** True when the model was called. */
   isModelCalled: boolean
+  /**
+   * Why a model call gave no usable summary: the port's `reason` ('invalid-json'
+   * when it answered with bad JSON twice) or the thrown error. Absent when the
+   * summary worked or no call was made. A usage-limit reason means: retry later.
+   */
+  failReason?: string
 }
 
 export type SummarizeModule = {
@@ -257,7 +264,7 @@ export type MemoryIndex = { readonly size: number }
 
 export type SearchModule = {
   /** Applies `forget` lines; knowledge facts win over inbox facts with the same id. */
-  buildIndex: (lines: JournalLine[], knowledge: KnowledgeDoc | undefined, now: number) => MemoryIndex
+  buildIndex: (lines: JournalLine[], knowledge: KnowledgeDoc | undefined, now: number, consolidatedIds?: Iterable<string>) => MemoryIndex
   search: (index: MemoryIndex, query: string, opts?: { limit?: number; types?: ('fact' | 'episode')[] }) => SearchHit[]
 }
 
@@ -279,7 +286,7 @@ export type KnowledgeModule = {
   parseKnowledge: (markdown: string) => KnowledgeDoc
   renderKnowledge: (doc: KnowledgeDoc) => string
   /** Inbox = facts in the journal not in knowledge and not forgotten. */
-  inboxFacts: (lines: JournalLine[], knowledge: KnowledgeDoc | undefined) => Fact[]
+  inboxFacts: (lines: JournalLine[], knowledge: KnowledgeDoc | undefined, consolidatedIds?: Iterable<string>) => Fact[]
   consolidate: (
     deps: { fs: MemFs; model: MemModel; files: FilesModule; paths: MemoryPaths },
     opts: { key: string; projectPath: string; sessionId: string; now: number; modelName: string },

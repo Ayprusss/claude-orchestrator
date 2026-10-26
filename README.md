@@ -27,7 +27,8 @@ Run `/orchestrator` to open the pane.
 - **Projects**: register each project once (a name and an absolute folder path).
 - **New**: pick a project, backend, and prompt, then Queue. Batch mode makes one task per line.
 - **Sessions**: watch tasks queue, run, and finish; read output, kill, retry, or open an agent's transcript.
-- **Settings**: max parallel sessions (up to 16), usage-limit standby, the `claude` binary, and flags for headless runs.
+- **Memory**: what the orchestrator remembers per project (knowledge, new facts, past tasks) and this session's ledger; delete, consolidate or clear it.
+- **Settings**: max parallel sessions (up to 16), usage-limit standby, the `claude` binary, flags for headless runs, and the memory settings.
 - **Docs**: the full guide.
 
 ### HUD
@@ -51,6 +52,20 @@ Two backends: **agent** (a subagent of the current session) and **process** (a s
 ### Auto mode
 
 Agent tasks work in auto mode. When an agent task is ready to start, the orchestrator asks the main session to launch it with its own Agent tool, so auto mode judges the launch against your request. (Auto mode refuses agents that plugin code starts by itself.) Tasks that are ready together are launched in one turn. To have the plugin start agents directly instead, set **Start agent tasks** to *from the plugin* in Settings; that does not work in auto mode.
+
+### Memory
+
+The orchestrator keeps a memory, so its work survives compaction, `/clear`, reloads and new sessions:
+
+- A **ledger** per session (your goals, decisions, and every task with why it exists and its summary), shown to the main session in its system prompt.
+- Per **project**: a summary of every finished task, the facts those summaries found, and a curated `knowledge.md`. Each new task in the project starts with a short brief from it, marked as reference material.
+- Tools for the main session: `note`, `memory_search`, `memory_read`, `remember` and `forget`.
+
+It is stored in its own folder, `~/.claude/orchestrator-memory/` by default, never in your projects or in Claude Code's own memory. Secrets are scrubbed before anything is written. Summaries use a small model (`haiku` by default), one call per finished task.
+
+Settings: **Memory** (on/off), **Memory folder**, **Task summaries** (short, detailed or off), **Summary model**, **Task transcripts** (kept or not) and **Brief for new tasks** (a cap in characters).
+
+The pane's **Memory** tab shows everything that is stored: knowledge, inbox, past tasks and the ledger. Delete a fact there, press **Consolidate** to merge new facts into `knowledge.md`, or **Clear project memory** (twice, to confirm) to delete a project's memory. Turning memory off stops all reads and writes but keeps what is on disk; delete the folder to remove it all. The **Memory** page of the Docs tab has details.
 
 ## Notes
 

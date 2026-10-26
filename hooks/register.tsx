@@ -19,6 +19,35 @@ import * as hud from './hud'
 import type { HudCommand } from './hud'
 import { LAUNCH_TAG, launchRequest } from './launch'
 import type { LaunchSpec } from './launch'
+import { DEFAULT_MEMORY_SETTINGS } from './memory/contract'
+import {
+  afterCompact as memAfterCompact,
+  beforeCompact as memBeforeCompact,
+  captureTask as memCaptureTask,
+  clearProject as memClearProject,
+  composeSection as memComposeSection,
+  consolidateNow as memConsolidateNow,
+  deleteFact as memDeleteFact,
+  ensureStarted as memEnsureStarted,
+  forget as memForget,
+  keepFact as memKeepFact,
+  memoryProjects as memMemoryProjects,
+  memoryRead as memMemoryRead,
+  memorySearch as memMemorySearch,
+  note as memNote,
+  onClear as memOnClear,
+  onSettings as memOnSettings,
+  onTaskAdded as memOnTaskAdded,
+  onTaskStatus as memOnTaskStatus,
+  recordEdit as memRecordEdit,
+  remember as memRemember,
+  resumePending as memResumePending,
+  saveNow as memSaveNow,
+  setMemoryView as memSetMemoryView,
+  tabData as memTabData,
+  withMemory as memWithMemory,
+} from './memory/harness'
+import { memorySettingsRows, memoryTab } from './memory/pane'
 import {
   NO_LIMIT,
   RECHECK_MS,
@@ -47,6 +76,7 @@ const DEFAULT_SETTINGS: Settings = {
   isDiffViewOn: true,
   isPingOn: true,
   agentLaunch: 'session',
+  ...DEFAULT_MEMORY_SETTINGS,
 }
 const DEFAULT_VIEW: View = { tab: 'sessions', selected: '', docPage: 'start' }
 const DEFAULT_DRAFT: Draft = {
@@ -71,17 +101,17 @@ const projects = atom(
 const tasks = atom(
   { plugin: 'orchestrator', key: 'tasks' } as const,
   [] as Task[],
-  { shape: 'orch-tasks-2' },
+  { shape: 'orch-tasks-3' },
 )
 const settings = atom(
   { plugin: 'orchestrator', key: 'settings' } as const,
   DEFAULT_SETTINGS,
-  { shape: 'orch-settings-5' },
+  { shape: 'orch-settings-6' },
 )
 const view = atom(
   { plugin: 'orchestrator', key: 'view' } as const,
   DEFAULT_VIEW,
-  { shape: 'orch-view-1' },
+  { shape: 'orch-view-2' },
 )
 const draft = atom(
   { plugin: 'orchestrator', key: 'draft' } as const,
@@ -173,6 +203,18 @@ async function setTask($: E, id: string, patch: Partial<Task>) {
   await update($, tasks, list =>
     list.map(t => (t.id === id ? { ...t, ...patch } : t)),
   )
+  if (patch.status) await memOnTaskStatus($, id, patch.status).catch(() => undefined)
+}
+
+const isLimitedNow = ($: E) => async () => (await read($, limitState)).isLimited
+
+/** Memory starts at session.start, or at first use when no surface was there yet. */
+async function memReady($: E) {
+  try {
+    await memEnsureStarted($, await read($, settings))
+  } catch {
+    // Memory stays off; the orchestrator works without it.
+  }
 }
 
 async function refreshStatus($: E) {
@@ -218,7 +260,22 @@ async function finish(
     status: final,
     at: await $.clock.now(),
   })
-  if (task.isNotify && final !== 'killed') {
+  try {
+    const settled = (await read($, tasks)).find(t => t.id === id)
+    const project = (await read($, projects)).find(p => p.id === task.projectId)
+    if (settled) {
+      memCaptureTask($, settled, project, await read($, settings), {
+        setTask: patch => setTask($, id, patch),
+        isLimited: isLimitedNow($),
+      })
+    }
+  } catch {
+    // Memory is best effort; the task record is already settled.
+  }
+  // An agent the main session launched reports back to it by itself: a second
+  // wake-up would only repeat it.
+  const isSelfReported = task.backend === 'agent' && !!task.launchAsks && !!task.agentId
+  if (task.isNotify && final !== 'killed' && !isSelfReported) {
     try {
       await $.prompt.submit({
         text: `[orchestrator] Task ${id} "${task.title}" finished: ${final}. Call ${TOOL}status with id ${id} to read the result.`,
@@ -238,10 +295,11 @@ async function launch($: E, task: Task) {
     return
   }
 
+  const prompt = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions)
   if (task.backend === 'agent') {
     try {
       const res = await $.agent.spawn({
-        prompt: resumedPrompt(task.prompt, task.interruptions),
+        prompt,
         description: task.title.slice(0, 60),
         subagentType: task.agentType || 'general-purpose',
         cwd: project.path,
@@ -271,7 +329,7 @@ async function launch($: E, task: Task) {
   const argv = [
     cfg.claudeBin,
     '-p',
-    resumedPrompt(task.prompt, task.interruptions),
+    prompt,
     ...splitArgs(cfg.processArgs),
   ]
   if (task.model) argv.push('--model', task.model)
@@ -353,7 +411,7 @@ async function pump($: E) {
 
 /** Asks the main session, in one message, to launch these agent tasks with its Agent tool. */
 async function askLaunches($: E, list: Task[]) {
-  const projs = await read($, projects)
+  const [projs, cfg] = await Promise.all([read($, projects), read($, settings)])
   const now = await $.clock.now()
   const specs: LaunchSpec[] = []
   for (const task of list) {
@@ -369,7 +427,7 @@ async function askLaunches($: E, list: Task[]) {
       agentType: task.agentType,
       model: task.model,
       folder: project.path,
-      prompt: resumedPrompt(task.prompt, task.interruptions),
+      prompt: resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions),
     })
   }
   if (!specs.length) return
@@ -494,6 +552,7 @@ type NewTask = {
   model: string
   agentType: string
   isNotify: boolean
+  why?: string
 }
 
 async function addTasks($: E, specs: NewTask[]): Promise<string[]> {
@@ -506,6 +565,11 @@ async function addTasks($: E, specs: NewTask[]): Promise<string[]> {
     createdAt: now,
   }))
   await update($, tasks, list => [...list, ...made].slice(-200))
+  const projs = await read($, projects)
+  await memReady($)
+  for (const t of made) {
+    await memOnTaskAdded($, t, projs.find(p => p.id === t.projectId)).catch(() => undefined)
+  }
   await pump($)
   return made.map(t => t.id)
 }
@@ -596,6 +660,7 @@ async function exitLimit($: E, text = 'Usage limit lifted. Resuming operations.'
   hud.event({ type: 'msg', role: 'system', text, status: 'resume', at: await $.clock.now() })
   void $.ui.toast(text)
   await pump($)
+  void memResumePending($, await read($, settings), isLimitedNow($)).catch(() => undefined)
 }
 
 /** At the reset time (or periodically when it is unknown), see if tokens are back. */
@@ -638,6 +703,7 @@ async function requeue($: E, id: string, output: string) {
       }
     }),
   )
+  await memOnTaskStatus($, id, 'queued').catch(() => undefined)
   hud.event({
     type: 'msg',
     role: 'system',
@@ -680,13 +746,23 @@ async function applySettings($: E, patch: Partial<Settings>) {
   if (clean.maxParallel !== undefined) {
     clean.maxParallel = Math.min(MAX_PARALLEL, Math.max(1, Math.round(Number(clean.maxParallel) || 1)))
   }
+  const before = await read($, settings)
   await update($, settings, x => ({ ...x, ...clean }))
   await saveSettings($)
+  await memOnSettings($, before, await read($, settings)).catch(() => undefined)
   await refreshStatus($)
   void pump($)
 }
 
 // ---- Code changes for the HUD --------------------------------------
+
+/** An agent task's edit, for its project memory's list of files. */
+function recordTaskEdit(input: Record<string, unknown>, res: unknown) {
+  const r = res as { deny?: string; isError?: boolean }
+  if (r.deny !== undefined || r.isError) return
+  const agentId = typeof input.agentId === 'string' ? input.agentId : undefined
+  if (agentId) memRecordEdit(agentToTask.get(agentId), input.file_path)
+}
 
 /** Sends the diff of a finished Edit or Write call to the HUD, tagged with its agent. */
 async function reportDiff(
@@ -740,7 +816,14 @@ function describeTask(t: Task, now: number, withOutput: boolean): string {
   const isStarting = t.status === 'running' && t.backend === 'agent' && !t.agentId && !!t.launchAskedAt
   const head = `${t.id} [${isStarting ? 'running: waiting for the main session to launch it' : t.status}] ${t.title} (${t.backend}, ${ran})`
   if (!withOutput) return head
-  return `${head}\n${t.output ? clip(t.output, 2000) : '(no output yet)'}`
+  const notes = [
+    ...(t.why ? [`Why: ${t.why}`] : []),
+    ...(t.outcome ? [`Outcome: ${t.outcome}`] : []),
+    ...(t.summary ? [`Summary: ${t.summary}`] : []),
+    ...(t.files?.length ? [`Files edited: ${t.files.join(', ')}`] : []),
+  ]
+  const out = t.output ? clip(t.output, 2000) : '(no output yet)'
+  return notes.length ? `${head}\n${notes.join('\n')}\nOutput (tail):\n${out}` : `${head}\n${out}`
 }
 
 async function retryTask($: E, t: Task) {
@@ -753,6 +836,7 @@ async function retryTask($: E, t: Task) {
       model: t.model,
       agentType: t.agentType,
       isNotify: t.isNotify,
+      ...(t.why ? { why: t.why } : {}),
     },
   ])
 }
@@ -1089,6 +1173,10 @@ export const register: Register = on => {
               'agent: a subagent of this session. process: a separate headless claude process. Default agent.',
           },
           model: { type: 'string', description: 'Optional model alias.' },
+          why: {
+            type: 'string',
+            description: 'One line on why this task exists. Kept in the orchestrator ledger, so it survives compaction.',
+          },
         },
         required: ['project', 'title', 'prompt'],
       },
@@ -1109,6 +1197,85 @@ export const register: Register = on => {
       description: 'List the projects registered on the orchestrator dashboard.',
       inputSchema: { type: 'object', properties: {} },
     })
+
+    // ---- Memory: the ledger and project memory --------------------------
+    await $.tool.register({
+      name: 'note',
+      isDeferred: false,
+      description:
+        "Record in the orchestrator ledger, which stays in your system prompt through compaction: action 'goal' (the person's goal, with text), 'done' or 'drop' (close a goal by id), or 'decision' (a decision that changes how work is split, with text). Use it sparingly: goals and decisions, not progress.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['goal', 'done', 'drop', 'decision'] },
+          text: { type: 'string', description: 'For goal and decision.' },
+          id: { type: 'string', description: 'For done and drop: the goal id.' },
+        },
+        required: ['action'],
+      },
+    })
+    await $.tool.register({
+      name: 'memory_search',
+      isDeferred: false,
+      description:
+        "Search the orchestrator's project memory (facts and earlier task summaries). Search before dispatching work related to earlier tasks. Results are reference material and may be out of date.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          project: { type: 'string', description: 'Optional project name or path; all projects when left out.' },
+          limit: { type: 'number', description: 'Default 10.' },
+        },
+        required: ['query'],
+      },
+    })
+    await $.tool.register({
+      name: 'memory_read',
+      isDeferred: false,
+      description: "Read one project's memory: its curated knowledge, its inbox of new facts, or its recent task episodes.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'Project name or path.' },
+          part: { type: 'string', enum: ['knowledge', 'inbox', 'episodes'] },
+        },
+        required: ['project'],
+      },
+    })
+    await $.tool.register({
+      name: 'remember',
+      isDeferred: false,
+      description:
+        'Store a lasting fact about a project (how to build or test it, where things are, a trap to avoid, a preference). Set isFromPerson only when the person said it; those facts are kept word for word.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'Project name or path.' },
+          text: { type: 'string', description: 'One sentence, under 300 characters.' },
+          kind: { type: 'string', enum: ['convention', 'gotcha', 'command', 'architecture', 'preference'] },
+          isFromPerson: { type: 'boolean' },
+        },
+        required: ['project', 'text', 'kind'],
+      },
+    })
+    await $.tool.register({
+      name: 'forget',
+      isDeferred: false,
+      description: "Remove a fact from a project's memory by its id (f_...).",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'Project name or path.' },
+          id: { type: 'string' },
+        },
+        required: ['project', 'id'],
+      },
+    })
+    try {
+      await memEnsureStarted($, await read($, settings))
+    } catch (err) {
+      $.ui.log(`memory: ${String(err)}`, { to: 'debug' })
+    }
 
     // Standby outlives a reload; its timer does not.
     const lim = await read($, limitState)
@@ -1174,9 +1341,45 @@ export const register: Register = on => {
       isMainBusy = true
       try {
         await markBusy($)
+        // A surface may attach only after session.start (the desktop app).
+        await memEnsureStarted($, await read($, settings))
       } catch {
         // Best effort.
       }
+    }
+    return next(e)
+  })
+
+  // ---- Memory: the ledger in the system prompt ------------------------
+
+  // The ledger snapshot, added last on the session side of the cache
+  // boundary. It changes only at start, compaction and /clear.
+  on('prompt.compose', async ($, e, next) => {
+    const res = await next(e)
+    const section = memComposeSection(e.tools)
+    return section ? { ...res, sections: [...res.sections, section] } : res
+  })
+
+  on('session.compact', async ($, e, next) => {
+    if (e.agentId) return next(e)
+    let instructions = e.instructions
+    try {
+      instructions = await memBeforeCompact($, e.instructions)
+    } catch {
+      // Compact as asked.
+    }
+    const res = await next({ ...e, ...(instructions === undefined ? {} : { instructions }) })
+    if (res.messages) await memAfterCompact($).catch(() => undefined)
+    return res
+  })
+
+  on('session.end', async ($, e, next) => {
+    try {
+      await memSaveNow($)
+      // /clear goes on under a new session id, and no session.start fires for it.
+      if (e.reason === 'clear') $.clock.after(300, () => void memOnClear($).catch(() => undefined))
+    } catch {
+      // Exits stay fast; the ledger was saved on its last change.
     }
     return next(e)
   })
@@ -1302,12 +1505,14 @@ export const register: Register = on => {
   // Every edit, the main session's and each agent's, goes to the HUD's diff view.
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     const res = await next(e)
+    recordTaskEdit(e as unknown as Record<string, unknown>, res)
     if (hud.isUp()) void reportDiff($, 'Edit', e as unknown as Record<string, unknown>, res)
     return res
   })
 
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
     const res = await next(e)
+    recordTaskEdit(e as unknown as Record<string, unknown>, res)
     if (hud.isUp()) void reportDiff($, 'Write', e as unknown as Record<string, unknown>, res)
     return res
   })
@@ -1371,6 +1576,7 @@ export const register: Register = on => {
         model: typeof input.model === 'string' ? input.model : '',
         agentType: 'general-purpose',
         isNotify: true,
+        ...(typeof input.why === 'string' && input.why.trim() ? { why: input.why.trim().slice(0, 200) } : {}),
       },
     ])
     const isAsked = input.backend !== 'process' && (await read($, settings)).agentLaunch !== 'plugin'
@@ -1394,6 +1600,48 @@ export const register: Register = on => {
         ? list.map(t => describeTask(t, now, false)).join('\n')
         : 'No tasks.',
     }
+  })
+
+  // ---- Memory tools -----------------------------------------------------
+
+  on('tool.call', { tool: /^mcp__orchestrator__note$/ }, async ($, e) => {
+    await memReady($)
+    const input = e as unknown as Record<string, unknown>
+    const action = input.action
+    if (action !== 'goal' && action !== 'done' && action !== 'drop' && action !== 'decision') {
+      return { result: "Give action 'goal', 'done', 'drop' or 'decision'." }
+    }
+    return {
+      result: await memNote($, {
+        action,
+        ...(typeof input.text === 'string' ? { text: input.text } : {}),
+        ...(typeof input.id === 'string' ? { id: input.id } : {}),
+      }),
+    }
+  })
+
+  on('tool.call', { tool: /^mcp__orchestrator__memory_search$/ }, async ($, e) => {
+    await memReady($)
+    const list = await memMemoryProjects($, await read($, projects))
+    return { result: await memMemorySearch($, list, e as unknown as Record<string, unknown>) }
+  })
+
+  on('tool.call', { tool: /^mcp__orchestrator__memory_read$/ }, async ($, e) => {
+    await memReady($)
+    const list = await memMemoryProjects($, await read($, projects))
+    return { result: await memMemoryRead($, list, e as unknown as Record<string, unknown>) }
+  })
+
+  on('tool.call', { tool: /^mcp__orchestrator__remember$/ }, async ($, e) => {
+    await memReady($)
+    const list = await memMemoryProjects($, await read($, projects))
+    return { result: await memRemember($, list, e as unknown as Record<string, unknown>) }
+  })
+
+  on('tool.call', { tool: /^mcp__orchestrator__forget$/ }, async ($, e) => {
+    await memReady($)
+    const list = await memMemoryProjects($, await read($, projects))
+    return { result: await memForget($, list, e as unknown as Record<string, unknown>) }
   })
 
   on('tool.call', { tool: `${TOOL}projects` }, async $ => {
@@ -1433,6 +1681,7 @@ export const register: Register = on => {
       ['sessions', 'Sessions'],
       ['new', 'New'],
       ['projects', 'Projects'],
+      ['memory', 'Memory'],
       ['settings', 'Settings'],
       ['docs', 'Docs'],
     ]
@@ -1808,6 +2057,7 @@ export const register: Register = on => {
             onInput={(value: string) => void setSettings({ processArgs: value })}
             onSubmit={(value: string) => void setSettings({ processArgs: value })}
           />
+          {memorySettingsRows({ Box, Text, Button, Select, Input }, cfg, patch => void setSettings(patch))}
           <Button
             key="reset"
             plain
@@ -1822,6 +2072,42 @@ export const register: Register = on => {
 
     // ---- Docs -----------------------------------------------------------
     const page = DOCS.find(p => p.id === v.docPage) ?? DOCS[0]!
+    // ---- Memory ---------------------------------------------------------
+    const memData = v.tab === 'memory' ? await memTabData($, projs) : undefined
+    const redraw = () => $.ui.invalidate('ui.render')
+    const memoryTabView = () => {
+      if (!memData) return null
+      const projectOf = (key: string): Project | undefined => {
+        const p = memData.projects.find(x => x.key === key)
+        return p && p.path ? { id: '', name: p.name, path: p.path } : undefined
+      }
+      return memoryTab(
+        { Box, Text, Button, Select, Input },
+        memData,
+        {
+          setView: patch => void memSetMemoryView($, patch),
+          deleteFact: (key, id) => void memDeleteFact($, key, id).then(redraw),
+          keepFact: (key, id) => void memKeepFact($, key, id).then(text => (toast(text), redraw())),
+          consolidate: key => {
+            const project = projectOf(key)
+            if (!project) return toast('This project has no folder on record to check facts against.')
+            toast('Consolidating…')
+            void memConsolidateNow($, key, project, cfg, isLimitedNow($)).then(r => {
+              toast(r.status === 'done' ? `Consolidated: ${r.kept} kept, ${r.dropped} dropped, ${r.stale} possibly stale.` : `Not consolidated: ${r.reason}`)
+              redraw()
+            })
+          },
+          clearProject: key =>
+            void memClearProject($, key).then(text => {
+              toast(text)
+              void memSetMemoryView($, { selected: '' })
+              redraw()
+            }),
+        },
+        { isMemoryOn: cfg.isMemoryOn !== false, hasForms, rows: room },
+      )
+    }
+
     const docsTab = () => (
       <Box flexDirection="column">
         <Box>
@@ -1864,6 +2150,7 @@ export const register: Register = on => {
         {v.tab === 'sessions' && sessions()}
         {v.tab === 'new' && create()}
         {v.tab === 'projects' && projectsTab()}
+        {v.tab === 'memory' && memoryTabView()}
         {v.tab === 'settings' && settingsTab()}
         {v.tab === 'docs' && docsTab()}
       </Box>

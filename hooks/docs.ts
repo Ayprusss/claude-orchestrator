@@ -146,6 +146,102 @@ ${F}
 A project path the tool has not seen is registered automatically if you pass an absolute path as the project.`,
   },
   {
+    id: 'memory',
+    title: 'Memory',
+    body: `# Memory
+
+The orchestrator remembers its work, so it survives a compaction, ${'`/clear`'}, a reload or a new session, and each new task starts with what earlier tasks in its project learned.
+
+## What is stored
+
+| Part | Scope | What it holds |
+| --- | --- | --- |
+| **Ledger** | One per session | Your goals, the decisions that shape the work, and every task with why it exists and its one-line summary |
+| **Episodes** | Per project | One record per finished task: title, outcome, summary, the files it edited, follow-ups |
+| **Inbox** | Per project | Facts the task summaries found (conventions, gotchas, commands, architecture, preferences), not yet curated |
+| **Knowledge** | Per project | ${'`knowledge.md`'}: the curated facts, merged from the inbox. Plain Markdown you can read and edit |
+
+A task that is killed leaves nothing. A short output is kept as is, with no model call.
+
+## Where it lives
+
+In its own folder, ${'`~/.claude/orchestrator-memory/`'} by default (Settings: **Memory folder**). It is never inside your project folders, so it never shows up in git, and Claude Code's own memory (${'`MEMORY.md`'}) is never read or written.
+
+${F}
+<memory folder>/
+  ledgers/<session id>.json
+  projects/<name>-<hash>/
+    meta.json
+    knowledge.md
+    journal/<session id>.jsonl
+    transcripts/<task id>.md     only when transcripts are kept
+${F}
+
+A project's memory is keyed by its folder path, so removing and adding a project again keeps it. Each session writes only its own files, so several sessions can run at once.
+
+## How recall works
+
+- **The main session** sees the ledger in its system prompt. It is redrawn only at the start of a session, after a compaction and after ${'`/clear`'}, so it does not break prompt caching. In between, finished tasks reach it as before: an agent the session launched reports back by itself, and other tasks send an ${'`[orchestrator]`'} message. ${'`status`'} with a task id shows its summary, outcome and the files it edited.
+- **Headless runs** (${'`claude -p`'}, such as process tasks) keep no memory of their own, so they never take over the main session's unfinished work.
+- **Each new task** gets a short brief before its prompt, inside ${'`<orchestrator-memory>`'}: the most relevant facts, then the last few related tasks. It is capped (Settings: **Brief for new tasks**, 3,000 characters by default), and it is marked as reference material that may be out of date, not as instructions.
+- **Unfinished work** from a recent session (open goals, tasks that never finished, under 7 days old) is shown to the next session so it can pick it up.
+
+## Tools the main session gets
+
+| Tool | What it does |
+| --- | --- |
+| ${'`note`'} | Add a goal, close or drop one, or record a decision in the ledger |
+| ${'`memory_search`'} | Search facts and past tasks by words or file paths |
+| ${'`memory_read`'} | Read a project's knowledge, inbox or episodes |
+| ${'`remember`'} | Store a lasting fact about a project |
+| ${'`forget`'} | Remove a fact |
+
+${'`dispatch`'} also takes an optional ${'`why`'}: one line on why the task exists, kept in the ledger.
+
+## The Memory tab
+
+Pick a project, then a part:
+
+- **Knowledge**: the curated facts by section, each with its source (*person*, or the task it came from) and date. Press a fact for its details; **delete** removes it. A fact whose files are gone from the project is marked *possibly stale*.
+- **Inbox**: new facts. **keep** writes one to ${'`knowledge.md`'} now; **delete** drops it.
+- **Episodes**: finished tasks, newest first, with outcome and summary. Press one for its files and follow-ups.
+- **Ledger**: this session's goals, decisions and tasks.
+
+**Consolidate** merges the inbox into ${'`knowledge.md`'} now: duplicates merged, the newer of two conflicting facts kept, facts you stated kept word for word. It also runs by itself once a project has 15 new facts. **Clear project memory** deletes everything stored for the project; press it twice to confirm. The tab shows the project's memory folder.
+
+You can also edit ${'`knowledge.md`'} by hand. Keep each line's ${'`[f_…]`'} id, so the tab and ${'`forget`'} can find it.
+
+## Settings
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| Memory | on | Off stops every read, write, model call and brief. What is stored stays until cleared |
+| Memory folder | empty | Where memory lives. Empty is ${'`~/.claude/orchestrator-memory`'} |
+| Task summaries | short | *short*: one paragraph and up to 3 facts. *detailed*: up to 6 paragraphs and 8 facts. *off*: keep the output tail, no model call |
+| Summary model | haiku | The model that writes summaries and consolidates |
+| Task transcripts | not kept | Kept: each task's transcript is saved too, for 30 days |
+| Brief for new tasks | 3,000 characters | The cap on what each new task is given (about 750 tokens) |
+
+## Cost
+
+One small-model call per finished task (none for short outputs or with summaries off), and one per consolidation. They use your account's usage limits, run one at a time, and wait during usage-limit standby, catching up afterwards.
+
+## Safety
+
+- **Secrets are scrubbed** before anything is written: API keys and tokens of known shapes, ${'`KEY=value`'} pairs whose name says secret, private key blocks and long random-looking strings become ${'`[redacted]`'}.
+- **Memory is data, not instructions.** Facts and task summaries never go in the system prompt; briefs say they are reference material; the summarizer is told to ignore instruction-like text in task output.
+- **Every fact records where it came from.** Facts you stated are trusted most and never rewritten.
+- **It stays on this machine.** Plain files in your memory folder; nothing is sent anywhere except to the model to summarize, and that text is already in the session.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| "No memory folder yet" | Your home folder could not be found. Set **Memory folder** in Settings |
+| A task got no brief | Its project has no memory yet, memory is off, or nothing was relevant |
+| Summaries are just output | Summaries are off, the output was short, or the summary call failed (it is retried after a usage limit lifts) |`,
+  },
+  {
     id: 'limits',
     title: 'Limits and troubleshooting',
     body: `# Limits and troubleshooting
@@ -173,7 +269,7 @@ A project path the tool has not seen is registered automatically if you pass an 
 
 ## Where state lives
 
-Projects and settings are kept across sessions. The task list lives with the current session.`,
+Projects and settings are kept across sessions. The task list lives with the current session; the ledger of goals, decisions and tasks, and each project's memory, are kept on disk (see **Memory**).`,
   },
   {
     id: 'hud',
