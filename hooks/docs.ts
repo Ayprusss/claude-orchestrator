@@ -56,6 +56,17 @@ Runs as a subagent of **this** session, started in the project's folder.
 - **Open** jumps the main view to its transcript so you can watch or steer it.
 - You can choose the agent type: ${'`general-purpose`'}, ${'`Explore`'} (read-only search), ${'`Plan`'} (design only).
 
+### How an agent task starts
+
+By default (Settings: **Start agent tasks** = *from the main session*), the orchestrator does not start the agent itself. When a task's turn comes, it sends the main session one ${'`[orchestrator]`'} message listing every task that is ready, and the session launches each with its own **Agent** tool. The orchestrator then runs the agent in the project's folder, in the background, and tracks it as usual.
+
+This is what makes agent tasks work in **auto mode**: auto mode judges each action against what you asked for, and a launch made from plugin code has no request behind it, so auto mode refuses it. A launch made by the session's own Agent tool, with the task's prompt in full, is judged like any other.
+
+- The task shows as *running: waiting for the main session to launch it* until the launch comes.
+- If no launch comes, the orchestrator asks again every 3 minutes while the session is idle, and fails the task after 3 requests.
+- A refused launch (you said no, or auto mode blocked it) fails the task with the reason.
+- *from the plugin* starts agents directly, as before. It skips the extra step but does not work in auto mode.
+
 ## process (separate headless ${'`claude -p`'})
 
 Starts an independent ${'`claude`'} process in the project's folder and streams its output into the task.
@@ -116,6 +127,8 @@ The mod gives the main Claude session three tools, so you can simply **ask it** 
 | ${'`mcp__orchestrator__status`'} | Report every task, or one by id, with the tail of its output |
 | ${'`mcp__orchestrator__projects`'} | List the registered projects |
 
+When an **agent** task is ready to start, the session gets an ${'`[orchestrator]`'} message asking it to launch the task with its Agent tool (see **Backends**). Tasks that become ready together are asked for in one message, so the session launches them in one turn.
+
 When a task that the main session dispatched **finishes**, the session is woken with a short message naming the task, so it can read the result with ${'`status`'} and decide the next step.
 
 ## Example prompts
@@ -154,6 +167,9 @@ A project path the tool has not seen is registered automatically if you pass an 
 | Kill does nothing for an agent task | The agent already finished, or the stop request was refused; the task is still marked killed |
 | Edits collide | Two tasks share files in one folder. Use separate worktrees |
 | Everything is on standby | The usage limit was reached. It resumes at the reset, or press **Resume now** |
+| Agent task fails at once with "auto mode classifier gave no verdict" | Settings: **Start agent tasks** is *from the plugin*, which auto mode refuses. Set it to *from the main session* |
+| Agent task stuck "waiting for the main session to launch it" | The session is busy, or did not act on the launch message. It is asked again every 3 minutes while idle, and the task fails after 3 requests |
+| Agent task fails with "The launch was refused" | You declined the Agent call, or auto mode blocked it. The reason follows in the output |
 
 ## Where state lives
 

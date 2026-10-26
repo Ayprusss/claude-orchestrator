@@ -48,6 +48,10 @@ By default, when your plan's 5-hour or weekly limit is reached, the orchestrator
 
 Two backends: **agent** (a subagent of the current session) and **process** (a separate headless `claude -p` run, which needs the `claude` CLI on the machine running the session). The main session also gets `dispatch`, `status` and `projects` tools, so you can ask it to delegate work.
 
+### Auto mode
+
+Agent tasks work in auto mode. When an agent task is ready to start, the orchestrator asks the main session to launch it with its own Agent tool, so auto mode judges the launch against your request. (Auto mode refuses agents that plugin code starts by itself.) Tasks that are ready together are launched in one turn. To have the plugin start agents directly instead, set **Start agent tasks** to *from the plugin* in Settings; that does not work in auto mode.
+
 ## Notes
 
 - Headless process tasks cannot answer permission prompts. They run with `--permission-mode acceptEdits` by default; change it in Settings only if you trust the task.

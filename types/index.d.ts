@@ -2,6 +2,10 @@ export type OrchProject = { id: string; name: string; path: string }
 
 export type OrchBackend = 'agent' | 'process'
 
+// Who starts an agent task: the main session through its own Agent tool
+// (works in auto mode), or the plugin directly with $.agent.spawn.
+export type OrchAgentLaunch = 'session' | 'plugin'
+
 export type OrchStatus = 'queued' | 'running' | 'done' | 'failed' | 'killed'
 
 export type OrchTask = {
@@ -19,6 +23,10 @@ export type OrchTask = {
   isNotify: boolean
   // How many times a usage limit cut this task off and sent it back to the queue.
   interruptions?: number
+  // An agent task the main session was asked to launch and has not yet: when
+  // it was last asked, and how many times.
+  launchAskedAt?: number
+  launchAsks?: number
   createdAt: number
   startedAt?: number
   endedAt?: number
@@ -34,6 +42,7 @@ export type OrchSettings = {
   isDiffViewOn: boolean
   // Play a ping once the main session and every task are done.
   isPingOn: boolean
+  agentLaunch: OrchAgentLaunch
 }
 
 export type OrchTab = 'sessions' | 'new' | 'projects' | 'settings' | 'docs'
