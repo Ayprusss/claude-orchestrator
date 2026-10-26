@@ -181,7 +181,8 @@ A project's memory is keyed by its folder path, so removing and adding a project
 
 ## How recall works
 
-- **The main session** sees the ledger in its system prompt. It is redrawn only at the start of a session, after a compaction and after ${'`/clear`'}, so it does not break prompt caching. In between, finished tasks reach it as the usual ${'`[orchestrator]`'} messages, now with their summary.
+- **The main session** sees the ledger in its system prompt. It is redrawn only at the start of a session, after a compaction and after ${'`/clear`'}, so it does not break prompt caching. In between, finished tasks reach it as before: an agent the session launched reports back by itself, and other tasks send an ${'`[orchestrator]`'} message. ${'`status`'} with a task id shows its summary, outcome and the files it edited.
+- **Headless runs** (${'`claude -p`'}, such as process tasks) keep no memory of their own, so they never take over the main session's unfinished work.
 - **Each new task** gets a short brief before its prompt, inside ${'`<orchestrator-memory>`'}: the most relevant facts, then the last few related tasks. It is capped (Settings: **Brief for new tasks**, 3,000 characters by default), and it is marked as reference material that may be out of date, not as instructions.
 - **Unfinished work** from a recent session (open goals, tasks that never finished, under 7 days old) is shown to the next session so it can pick it up.
 

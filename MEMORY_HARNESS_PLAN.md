@@ -2,7 +2,7 @@
 
 A plan to give the orchestrator a memory that survives compaction, `/clear`, reloads and new sessions, and to give the agents it dispatches what earlier tasks in the same project learned.
 
-Status: **plan, not built**, except §17 (starting agent tasks in auto mode), which is built. Target plugin version: `0.6.0` (phase 1) through `0.8.0` (phase 3).
+Status: **built** (all three phases, plus §17), on branch `memory-harness`. Shipped together as `0.6.0` instead of one release per phase. §18 lists what changed from this plan and what still needs a live check.
 
 ---
 
@@ -678,3 +678,45 @@ Add `"Agent"` to `permissions.allow` in settings, set **Start agent tasks** to *
 
 - **Duplicate wake-ups:** a task that never started still sends its own "finished: failed" wake-up after `dispatch` already returned, which made seven extra turns in the pilot. Fix with the memory work: report a launch failure that happens before the agent starts back to `dispatch` directly (or fold such failures into one message), with no wake-up per task.
 - **Installed copy vs. working copy:** the plugin runs from its marketplace install, not this working copy. A change reaches a session only through a new commit or version and `claude plugin update` + `/reload-plugins`, or by starting a session with `claude --plugin-dir <this repo>`.
+
+## 18. Build status (after the pilot)
+
+All three phases were built at once by six parallel agents (§16.1), then merged and wired by the main session. 153 tests pass, the project type-checks with the repo's strict settings, and `claude plugin validate` passes.
+
+### 18.1 Contract changes accepted during the build
+
+| # | Change | Asked by | Why |
+|---|---|---|---|
+| 1 | `inboxFacts(lines, knowledge, consolidatedIds?)` | E | Facts merged away must not come back into the inbox and keep triggering consolidation |
+| 2 | `buildIndex(lines, knowledge, now, consolidatedIds?)` | D | Same reason, for briefs and search |
+| 3 | `LedgerModule.adoptCarryOver` | B | Carried-over goals must live in the new ledger, or `note done` can never close them |
+| 4 | `SummaryResult.failReason` | C | Tell "out of tokens, retry later" from "bad answer" |
+| — | `MemoryTabActions.editFact` | F | **Deferred.** Pressing a fact shows it with Delete; editing is a follow-up |
+
+### 18.2 Where the build differs from the plan
+
+- **Wiring module.** The wiring lives in `hooks/memory/harness.ts`; `register.tsx` only calls it. Two engine rules shaped this: `$` may only be passed to functions the scanner can follow (named imports, not `module.fn`), and a state atom may only be written in the file that defines it (so `ledger` and `memoryView` live in `harness.ts`).
+- **Home folder (Q1).** `USERPROFILE` or `HOME` from `$.env` first, then the Node one-liner, then the Settings field.
+- **Main session only (Q2).** The ledger section is added only when the request offers the `Agent` tool, which subagents are not given. Confirm in a live session (debug log).
+- **Headless runs keep no memory.** `$.session.surfaces()` is empty under `claude -p`, so process tasks never start memory, write ledgers, or adopt the main session's unfinished work.
+- **Lazy start.** Memory also starts at the first main turn, first task added, or first memory tool call, for sessions where no surface had attached yet at `session.start`.
+- **No duplicate wake-ups (§17.3).** A task the main session launched with its Agent tool reports back by itself, so `finish` no longer sends it the `[orchestrator] … finished` message. Other tasks still get it.
+- **Summaries are not in the wake-up message.** They are written onto the task (`status <id>` shows summary, outcome and files) and into the ledger.
+- **Preferences in every brief.** Up to 3 of the person's own `preference` facts are always matched into a task's brief, so a general preference is recalled even when the task shares no words with it.
+- **Clearing a project** uses a guarded Node one-liner (`$.fs` has no delete), limited to `<root>/projects/<key>`.
+
+### 18.3 Still to verify in a live session
+
+- [ ] Q2: the ledger section reaches the main session's system prompt and no subagent's.
+- [ ] Q3: requests between compactions hit the prompt cache (the section text is identical).
+- [ ] Q4: `$.session.messages({ agentId, as: 'api' })` is readable when `finish` runs for an agent task.
+- [ ] Q5: `haiku` passes the model allowlist for summaries on this account.
+- [ ] A finished agent task writes an episode with a summary and its edited files; the next task in that project gets a brief.
+- [ ] `/compact` keeps the ledger; `/clear` carries unfinished goals into the new session.
+
+### 18.4 Not built yet
+
+- Pruning old ledgers (30 days) and transcripts (30 days / 200 per project) from §9.4. Journals rotate, and episodes over 90 days are filtered on read, but nothing deletes old files.
+- Editing a fact in the Memory tab.
+- Fuller summaries for process tasks (Q6).
+- A shared, cross-project preferences file (Q7).
