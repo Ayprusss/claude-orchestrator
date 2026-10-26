@@ -221,8 +221,9 @@ function baseEpisode(input: SummaryInput): Omit<Episode, 'outcome' | 'summary' |
   return episode
 }
 
-function rawResult(input: SummaryInput, material: string, isModelCalled: boolean): SummaryResult {
+function rawResult(input: SummaryInput, material: string, isModelCalled: boolean, failReason?: string): SummaryResult {
   return {
+    ...(failReason ? { failReason } : {}),
     episode: {
       ...baseEpisode(input),
       outcome: rawOutcome(input.status),
@@ -293,6 +294,8 @@ export async function summarizeTask(
 ): Promise<SummaryResult> {
   let material = ''
   let isModelCalled = false
+  // Why the last model call gave nothing usable: the port's `reason`, or the error thrown.
+  let lastReason: string | undefined
   try {
     material = extractMaterial(input.transcript, input.output)
     const detail = opts.detail
@@ -313,13 +316,14 @@ export async function summarizeTask(
         effort: settings.effort,
       })
       const answer = res?.text
+      if (res?.reason) lastReason = res.reason
       return { parsed: parseSummary(answer), isAnswered: typeof answer === 'string' && answer.trim() !== '' }
     }
     const first = await ask(prompt)
     // One retry when the model answered but not with usable JSON. No answer at all
     // (a refusal or a limit, given as `reason`) is not retried.
     const parsed = first.parsed ?? (first.isAnswered ? (await ask(prompt + RETRY_NOTE)).parsed : undefined)
-    if (!parsed) return rawResult(input, material, true)
+    if (!parsed) return rawResult(input, material, true, lastReason ?? 'invalid-json')
 
     const summary = clipStart(scrub(parsed.summary).trim(), settings.summaryCap).trim()
     const followups = parsed.followups
@@ -331,10 +335,10 @@ export async function summarizeTask(
       facts: buildFacts(parsed, input, settings, deps.newId),
       isModelCalled: true,
     }
-  } catch {
+  } catch (err) {
     // A thrown model call (limit, network, denied) or anything unexpected: keep the material raw.
     try {
-      return rawResult(input, material, isModelCalled)
+      return rawResult(input, material, isModelCalled, isModelCalled ? String(err) : undefined)
     } catch {
       return {
         episode: {

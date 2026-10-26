@@ -164,7 +164,7 @@ test('hand edits are tolerated', async () => {
     'Under an unknown heading.',
     '[link](http://x) is not an id (and this is not a source)',
   ])
-  const [noId, first, dup, unknown, link] = doc.facts
+  const [noId, first, dup, unknown, link] = doc.facts as [Fact, Fact, Fact, Fact, Fact]
   expect(/^f_[0-9a-z]{6}$/.test(noId.id)).toBe(true)
   expect(noId.origin).toBe('person')
   expect(noId.kind).toBe('convention')
@@ -277,11 +277,11 @@ test('a merge writes knowledge.md and meta.json, drops forgotten facts, and rele
   expect(r).toEqual({ status: 'done', kept: 3, dropped: 2, stale: 0 })
 
   expect(calls.length).toBe(1)
-  expect(calls[0].model).toBe('haiku')
-  expect(calls[0].effort).toBe('medium')
-  expect(calls[0].maxTokens).toBe(4000)
-  expect(calls[0].prompt).not.toContain('f_forget')
-  expect(calls[0].prompt).toContain('f_dup001')
+  expect(calls[0]!.model).toBe('haiku')
+  expect(calls[0]!.effort).toBe('medium')
+  expect(calls[0]!.maxTokens).toBe(4000)
+  expect(calls[0]!.prompt).not.toContain('f_forget')
+  expect(calls[0]!.prompt).toContain('f_dup001')
 
   const doc = parseKnowledge(fs.files.get(paths.knowledgeFile(KEY))!)
   expect(doc.consolidatedAt).toBe(Date.parse('2026-10-26T00:00:00Z'))
@@ -317,7 +317,7 @@ test('the staleness pass marks facts whose paths are all gone', async () => {
   )
   const r = await consolidate({ fs, model, files: memFiles(lines), paths }, OPTS)
   expect(r).toEqual({ status: 'done', kept: 4, dropped: 0, stale: 1 })
-  expect(calls[0].prompt).toContain('"possiblyStale": true')
+  expect(calls[0]!.prompt).toContain('"possiblyStale": true')
   const md = fs.files.get(paths.knowledgeFile(KEY))!
   expect(md).toContain('- [f_gone01] Fact f_gone01. (possibly stale) (task t1,')
   expect(md).not.toContain('[f_some01] Fact f_some01. (possibly stale)')

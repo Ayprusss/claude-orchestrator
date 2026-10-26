@@ -16,19 +16,7 @@ import {
   type ProjectMeta,
 } from './contract'
 
-// TODO(merge): import { scrub } from './scrub'
-// Local stand-in for unit C's scrub until the branches merge. Delete this
-// function and use the import above; the merge must not keep both.
-function scrub(text: string): string {
-  return text
-    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[redacted]')
-    .replace(/\b(?:sk-ant-|sk-)[A-Za-z0-9_-]{16,}/g, '[redacted]')
-    .replace(/\b(?:ghp_|gho_|ghs_|ghu_|github_pat_)[A-Za-z0-9_]{20,}/g, '[redacted]')
-    .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[redacted]')
-    .replace(/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, '[redacted]')
-    .replace(/\bAIza[0-9A-Za-z_-]{35}\b/g, '[redacted]')
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[redacted]')
-}
+import { scrub } from './scrub'
 
 export const KNOWLEDGE_VERSION = 1
 export const LOCK_TTL_MS = 5 * 60 * 1000
@@ -136,9 +124,10 @@ export function parseKnowledge(markdown: string): KnowledgeDoc {
   for (const raw of markdown.replace(/\r\n?/g, '\n').split('\n')) {
     const header = HEADER_RE.exec(raw.trim())
     if (header) {
-      const proj = /project:\s*(.*?)\s*(?:·|$)/.exec(header[2])
+      const meta = header[2] ?? ''
+      const proj = /project:\s*(.*?)\s*(?:·|$)/.exec(meta)
       if (proj) project = (proj[1] ?? '').trim()
-      const date = /consolidated\s+(\d{4}-\d{2}-\d{2})/.exec(header[2])
+      const date = /consolidated\s+(\d{4}-\d{2}-\d{2})/.exec(meta)
       if (date) consolidatedAt = parseDay(date[1] ?? '') ?? 0
       continue
     }

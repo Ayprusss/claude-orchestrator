@@ -359,6 +359,7 @@ export const ledgerModule: LedgerModule = {
   emptyLedger,
   applyTaskEvent,
   applyNote,
+  adoptCarryOver,
   pickCarryOver,
   renderSnapshot,
   compactionInstructions,

@@ -1,4 +1,9 @@
+import type { AgentSpawnInput } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+
+// The fields a test's spawn needs; the engine fills the rest in a session.
+const spawnInput = (prompt: string, description: string) =>
+  ({ prompt, description }) as unknown as AgentSpawnInput
 
 const PANE = {
   plugin: 'orchestrator',
@@ -57,7 +62,7 @@ test('the main session launches an agent task, in its project folder', async ($,
   await clock.advance(120_000)
 
   // The session's Agent call: the plugin sets the folder and the background.
-  const res = await $.agent.spawn({ prompt: 'Add tests for the parser.', description: `orch-${id} Write tests` })
+  const res = await $.agent.spawn(spawnInput('Add tests for the parser.', `orch-${id} Write tests`))
   expect(res.agentId).toBe('agent-1')
   expect(spawned[0]).toEqual({ cwd: 'D:/work/demo', background: true, prompt: 'Add tests for the parser.' })
   const running = await $.tool.call({ tool: 'mcp__orchestrator__status', id })
@@ -65,7 +70,7 @@ test('the main session launches an agent task, in its project folder', async ($,
   expect(JSON.stringify(running)).toContain('(agent, 0s)')
 
   // A second launch of the same task is refused.
-  const again = await $.agent.spawn({ prompt: 'x', description: `orch-${id} Write tests` })
+  const again = await $.agent.spawn(spawnInput('x', `orch-${id} Write tests`))
   expect(again.deny).toBeDefined()
   expect(spawned.length).toBe(1)
 })
@@ -78,10 +83,10 @@ test('an agent spawn not tagged for a task passes through untouched', async ($, 
     seen.push(e.cwd)
     return { model: 'test-model', agentId: 'agent-2' }
   })
-  const res = await $.agent.spawn({ prompt: 'hello', description: 'look around' })
+  const res = await $.agent.spawn(spawnInput('hello', 'look around'))
   expect(res.agentId).toBe('agent-2')
   // A tag for a task that does not exist is not this plugin's to handle either.
-  const res2 = await $.agent.spawn({ prompt: 'hello', description: 'orch-zzzzzz look' })
+  const res2 = await $.agent.spawn(spawnInput('hello', 'orch-zzzzzz look'))
   expect(res2.agentId).toBe('agent-2')
   expect(seen).toEqual([undefined, undefined])
 })

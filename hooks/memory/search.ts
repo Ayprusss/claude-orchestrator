@@ -135,7 +135,7 @@ export function buildIndex(
   lines: JournalLine[],
   knowledge: KnowledgeDoc | undefined,
   now: number,
-  consolidatedIds?: readonly string[],
+  consolidatedIds?: Iterable<string>,
 ): SearchIndex {
   const forgotten = new Set<string>()
   for (const line of lines) if (line.kind === 'forget') forgotten.add(line.factId)
