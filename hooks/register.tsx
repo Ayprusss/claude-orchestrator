@@ -329,13 +329,16 @@ async function pump($: E) {
         // Don't start work the account cannot pay for.
         if (await checkWindows($)) break
       }
+      // A task the main session launches starts its clock when its agent
+      // starts (onLaunched), not while it waits for the launch.
+      const isAsked = next.backend === 'agent' && cfg.agentLaunch !== 'plugin'
       await setTask($, next.id, {
         status: 'running',
-        startedAt: await $.clock.now(),
+        ...(isAsked ? {} : { startedAt: await $.clock.now() }),
       })
       hadTask = true
       await markBusy($)
-      if (next.backend === 'agent' && cfg.agentLaunch !== 'plugin') toAsk.push({ ...next, status: 'running' })
+      if (isAsked) toAsk.push({ ...next, status: 'running' })
       else void launch($, { ...next, status: 'running' })
     }
   } finally {
@@ -414,7 +417,7 @@ async function onLaunched($: E, task: Task, res: { agentId?: string; deny?: stri
     return
   }
   agentToTask.set(res.agentId, task.id)
-  await setTask($, task.id, { agentId: res.agentId, launchAskedAt: undefined })
+  await setTask($, task.id, { agentId: res.agentId, launchAskedAt: undefined, startedAt: await $.clock.now() })
   const early = unclaimed.get(res.agentId)
   if (early) {
     unclaimed.delete(res.agentId)

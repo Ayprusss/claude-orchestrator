@@ -30,7 +30,7 @@ test('the pane draws the sessions tab and its tab row', async ($, on) => {
 
 test('the main session launches an agent task, in its project folder', async ($, on) => {
   mock.store(on)
-  mock.clock(on, { now: 1000 })
+  const clock = mock.clock(on, { now: 1000 })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('ui.status', () => ({ value: undefined }))
   const spawned: { cwd?: string; background: boolean; prompt: string }[] = []
@@ -52,6 +52,9 @@ test('the main session launches an agent task, in its project folder', async ($,
   // The task holds a slot, waiting for the main session to launch it.
   const waiting = await $.tool.call({ tool: 'mcp__orchestrator__status', id })
   expect(JSON.stringify(waiting)).toContain('waiting for the main session to launch it')
+  // Its clock has not started: the wait before the launch is not run time.
+  expect(JSON.stringify(waiting)).toContain('(agent, -)')
+  await clock.advance(120_000)
 
   // The session's Agent call: the plugin sets the folder and the background.
   const res = await $.agent.spawn({ prompt: 'Add tests for the parser.', description: `orch-${id} Write tests` })
@@ -59,6 +62,7 @@ test('the main session launches an agent task, in its project folder', async ($,
   expect(spawned[0]).toEqual({ cwd: 'D:/work/demo', background: true, prompt: 'Add tests for the parser.' })
   const running = await $.tool.call({ tool: 'mcp__orchestrator__status', id })
   expect(JSON.stringify(running)).toContain(`${id} [running] Write tests`)
+  expect(JSON.stringify(running)).toContain('(agent, 0s)')
 
   // A second launch of the same task is refused.
   const again = await $.agent.spawn({ prompt: 'x', description: `orch-${id} Write tests` })
