@@ -68,7 +68,7 @@ function promptLines(s: LaunchSpec): string[] {
   const before = s.known.before.trim() ? s.known.before : ''
   const after = s.known.after.trim() ? s.known.after : ''
   return [
-    `- prompt: the exact prompt you passed to dispatch for this task ("${s.title}"), verbatim` +
+    `- prompt: the exact prompt you passed to dispatch for this task ("${s.title}"; from dispatch_batch, that task's own prompt), verbatim` +
       (before || after ? ', with the text between the marker lines below added' : ''),
     ...(before ? ['  before it:', `<<<ORCH-BEFORE ${s.id}`, before, `ORCH-BEFORE ${s.id}>>>`] : []),
     ...(after ? ['  after it:', `<<<ORCH-AFTER ${s.id}`, after, `ORCH-AFTER ${s.id}>>>`] : []),

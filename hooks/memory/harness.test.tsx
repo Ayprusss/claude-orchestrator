@@ -122,6 +122,49 @@ test('dispatch keeps a task model and effort; a bad effort falls back to the def
   expect(st2).not.toContain('ultra')
 })
 
+const BRIEFS = '/home/t/.claude/orchestrator-memory/briefs/'
+
+test('dispatch with reads writes a brief with just that section; status shows the brief line', async ($, on) => {
+  const { files } = session(on)
+  files.set('/work/demo/PLAN.md', '# Plan\n## Unit S\nS only\n## Unit T\nT only\n')
+  const q = await call($, {
+    tool: 'mcp__orchestrator__dispatch',
+    project: '/work/demo',
+    title: 'Unit S',
+    prompt: 'Build unit S.',
+    reads: ['PLAN.md#Unit S', 'hooks/a.ts'],
+  })
+  const id = /Queued task ([a-z0-9]{6})/.exec(text(q))?.[1]
+  const brief = [...files.entries()].find(([k]) => k.startsWith(BRIEFS))
+  expect(brief).toBeDefined()
+  expect(brief?.[1]).toContain('## Unit S\nS only')
+  expect(brief?.[1]).not.toContain('T only')
+  expect(brief?.[1]).toContain('- hooks/a.ts')
+  const st = text(await call($, { tool: 'mcp__orchestrator__status', id }))
+  expect(st).toContain('Unit S')
+})
+
+test('dispatch_batch writes the shared context once; each task brief points to it', async ($, on) => {
+  const { files } = session(on)
+  const r = await call($, {
+    tool: 'mcp__orchestrator__dispatch_batch',
+    shared: 'Rules: work in your worktree; run the tests.',
+    project: '/work/demo',
+    tasks: [
+      { title: 'A', prompt: 'Do A.' },
+      { title: 'B', prompt: 'Do B.' },
+    ],
+  })
+  expect(text(r)).toContain('Queued 2 tasks')
+  const written = [...files.entries()].filter(([k]) => k.startsWith(BRIEFS))
+  const shared = written.filter(([k]) => k.includes('/batch-'))
+  expect(shared.length).toBe(1)
+  expect(shared[0]?.[1]).toContain('Rules: work in your worktree')
+  const briefs = written.filter(([k]) => !k.includes('/batch-'))
+  expect(briefs.length).toBe(2)
+  for (const [, md] of briefs) expect(md).toContain(shared[0]?.[0] ?? 'missing')
+})
+
 test('remember and memory_search find a fact; forget hides it', async ($, on) => {
   session(on)
   await call($, { tool: 'mcp__orchestrator__dispatch', project: '/work/demo', title: 't', prompt: 'p' })

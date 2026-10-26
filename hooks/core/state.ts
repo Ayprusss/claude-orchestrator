@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultTaskEffort: 'medium',
   throttleAtPercent: 80,
   throttledParallel: 2,
+  largeReadKB: 40,
   ...DEFAULT_MEMORY_SETTINGS,
 }
 const DEFAULT_VIEW: View = { tab: 'sessions', selected: '', docPage: 'start' }
@@ -60,12 +61,12 @@ const projects = atom(
 const tasks = atom(
   { plugin: 'orchestrator', key: 'tasks' } as const,
   [] as Task[],
-  { shape: 'orch-tasks-5' },
+  { shape: 'orch-tasks-6' },
 )
 const settings = atom(
   { plugin: 'orchestrator', key: 'settings' } as const,
   DEFAULT_SETTINGS,
-  { shape: 'orch-settings-8' },
+  { shape: 'orch-settings-9' },
 )
 const view = atom(
   { plugin: 'orchestrator', key: 'view' } as const,

@@ -13,12 +13,22 @@ import {
   note as memNote,
   remember as memRemember,
 } from '../memory/harness'
+import { parseReads } from '../brief'
+import { withBriefFile, writeShared } from './briefs'
 import { addTasks, describeTask, memReady } from './queue'
+import type { NewTask } from './queue'
 import { getProjects, getSettings, getTasks, saveProjects, updateProjects } from './state'
 import { TOOL, isAbsPath, nameOf, uid } from './util'
 
 type E = EngineInterface
 type Input = Record<string, unknown>
+
+const READS_SCHEMA = {
+  type: 'array',
+  items: { type: 'string' },
+  description:
+    'Optional reading list, relative to the project: "path" for a file, "path#Heading" for one Markdown section. The sections go into a brief file the agent reads instead of the whole document.',
+}
 
 /** Registers the tools at session.start. */
 export async function registerTools($: E) {
@@ -53,8 +63,40 @@ export async function registerTools($: E) {
           enum: ['low', 'medium', 'high', 'xhigh', 'max'],
           description: "Optional effort level for the task's agent or process. Leave it out for its default.",
         },
+        reads: READS_SCHEMA,
       },
       required: ['project', 'title', 'prompt'],
+    },
+  })
+  await $.tool.register({
+    name: 'dispatch_batch',
+    isDeferred: false,
+    description:
+      'Queue several tasks that share context, writing that context once. `shared` (rules, background, how to check and commit) is saved to one file every task reads; each task gives only its own part. Use it instead of several dispatch calls for a fan-out. Launch requests follow as with dispatch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        shared: { type: 'string', description: 'Context every task needs: written once, read from a file by each agent.' },
+        project: { type: 'string', description: 'Default project for the tasks (name or absolute path).' },
+        tasks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string' },
+              prompt: { type: 'string', description: "This task's own part only." },
+              project: { type: 'string', description: 'Overrides the batch project.' },
+              backend: { type: 'string', enum: ['agent', 'process'] },
+              model: { type: 'string' },
+              effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
+              why: { type: 'string' },
+              reads: READS_SCHEMA,
+            },
+            required: ['title', 'prompt'],
+          },
+        },
+      },
+      required: ['shared', 'tasks'],
     },
   })
   await $.tool.register({
@@ -168,6 +210,49 @@ async function resolveProject(
   return undefined
 }
 
+/** A task spec from dispatch or one dispatch_batch entry, with its brief (if any) before its prompt. */
+async function taskSpec($: E, project: Project, input: Input, shared?: { path?: string; text: string }): Promise<NewTask> {
+  const own = String(input.prompt ?? '')
+  const title = String(input.title ?? 'task')
+  const prompt = await withBriefFile($, project, { title, prompt: own, reads: parseReads(input.reads) }, shared)
+  return {
+    projectId: project.id,
+    title,
+    prompt,
+    ...(prompt !== own ? { dispatchPrompt: own } : {}),
+    backend: input.backend === 'process' ? 'process' : 'agent',
+    model: normalizeModel(input.model),
+    agentType: 'general-purpose',
+    isNotify: true,
+    ...(normalizeEffort(input.effort) ? { effort: normalizeEffort(input.effort) } : {}),
+    ...(typeof input.why === 'string' && input.why.trim() ? { why: input.why.trim().slice(0, 200) } : {}),
+  }
+}
+
+export async function dispatchBatchTool($: E, input: Input) {
+  const shared = String(input.shared ?? '').trim()
+  const list = Array.isArray(input.tasks) ? (input.tasks as Input[]).slice(0, 16) : []
+  if (!shared) return { result: 'Give the shared context in `shared`.' }
+  if (!list.length) return { result: 'Give at least one task in `tasks`.' }
+  const projects: Project[] = []
+  for (const t of list) {
+    const ref = String(t.project ?? input.project ?? '')
+    const p = await resolveProject($, ref)
+    if (!p) return { result: `Unknown project "${ref}" for task "${String(t.title ?? '')}". Nothing was queued.` }
+    projects.push(p)
+  }
+  await memReady($)
+  const file = await writeShared($, shared)
+  const specs: NewTask[] = []
+  for (let i = 0; i < list.length; i++) {
+    specs.push(await taskSpec($, projects[i] as Project, list[i] as Input, file))
+  }
+  const ids = await addTasks($, specs)
+  return {
+    result: `Queued ${ids.length} tasks (${ids.join(', ')}); shared context ${file.path ? `in ${file.path}` : 'put into each prompt (memory is off)'}. Launch requests follow as with dispatch.`,
+  }
+}
+
 export async function dispatchTool($: E, input: Input) {
   const project = await resolveProject($, String(input.project ?? ''))
   if (!project) {
@@ -175,19 +260,8 @@ export async function dispatchTool($: E, input: Input) {
       result: `Unknown project "${String(input.project)}". Call ${TOOL}projects, or pass an absolute path.`,
     }
   }
-  const [id] = await addTasks($, [
-    {
-      projectId: project.id,
-      title: String(input.title ?? 'task'),
-      prompt: String(input.prompt ?? ''),
-      backend: input.backend === 'process' ? 'process' : 'agent',
-      model: normalizeModel(input.model),
-      agentType: 'general-purpose',
-      isNotify: true,
-      ...(normalizeEffort(input.effort) ? { effort: normalizeEffort(input.effort) } : {}),
-      ...(typeof input.why === 'string' && input.why.trim() ? { why: input.why.trim().slice(0, 200) } : {}),
-    },
-  ])
+  if (Array.isArray(input.reads) && input.reads.length) await memReady($)
+  const [id] = await addTasks($, [await taskSpec($, project, input)])
   const isAsked = input.backend !== 'process' && (await getSettings($)).agentLaunch !== 'plugin'
   return {
     result: isAsked

@@ -10,7 +10,7 @@ test('a known prompt is named, not repeated; additions go in markers', async () 
   const text = launchRequest([
     { id: 'abc123', title: 'Refactor', agentType: '', model: 'sonnet', effort: 'medium', folder: '/w', prompt: full, ...(known ? { known } : {}) },
   ])
-  expect(text).toContain('the exact prompt you passed to dispatch for this task ("Refactor")')
+  expect(text).toContain('the exact prompt you passed to dispatch for this task ("Refactor"; from dispatch_batch')
   expect(text).not.toContain('Keep the API.')
   expect(text).toContain('<<<ORCH-BEFORE abc123\nBRIEF')
   expect(text).toContain('at most 150 words')

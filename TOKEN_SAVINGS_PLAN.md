@@ -2,7 +2,7 @@
 
 How to make the orchestrator use fewer tokens per session, both in the main session's context and in the agents it runs, which share the account's usage limits. Branch: `token-savings`.
 
-Status: items **1, 2, 3 and 6 are built** (§3). Items 4, 5 and 7 are specified in §4 and being built.
+Status: **all seven items are built** (§3 and §5). 185 tests pass; the project type-checks and validates.
 
 ## 1. Where the tokens went (measured in the pilot sessions)
 
@@ -100,3 +100,21 @@ Engine rules the split must respect (found in this repo):
 - **The tool:** `dispatch_batch { shared, tasks: [{ project, title, prompt, reads?, model?, effort?, backend?, why? }] }`.
 - **Where the shared text goes:** into one brief file, `briefs/batch-<id>.md`. Each task's own brief (item 4) starts by naming it. So the main session writes the shared text once, and each agent reads one short brief.
 - **Launch:** each task's prompt is the brief line plus its own `prompt`, so launch requests stay short even in full mode.
+
+## 5. Build status for items 4, 5 and 7
+
+- **Item 5:** two Sonnet agents at medium effort, in parallel, with reports capped at 150 words.
+  - `web/index.html` went from 93 KB to 9.6 KB. The rest now lives in `web/hud.css` and seven `web/hud/core/*.js` files, the largest 19.7 KB. The agent smoke-tested it in a browser with no console errors.
+  - `hooks/register.tsx` went from 85 KB to about 10 KB of wiring. The logic is in `hooks/core/` (`state`, `queue`, `standby`, `hud-bridge`, `pane`, `tools`, `ping`, `util`), the largest file 23 KB.
+  - Agent costs: 97k tokens for the HUD split and 129k for the core split. Their reports were about a quarter the length of the earlier rounds'.
+- **Item 4:** `reads` on `dispatch` and on each batch task.
+  - `hooks/brief.ts` holds the parsing, section extraction, rendering and the guard rule. `hooks/core/briefs.ts` writes the files.
+  - The large-read guard is a `tool.call` hook on `Read`, for agents mapped to a task only.
+  - Setting **Agents' whole-file reads** (`largeReadKB`, 40).
+- **Item 7:** the `dispatch_batch` tool.
+  - A task's stored prompt is the brief line plus its own text. The text the main session wrote is kept as `dispatchPrompt`, so item 1's short launch request and its prompt check still work.
+
+**To verify live:**
+- [ ] An agent with a brief reads the brief and not the whole plan.
+- [ ] The read guard's refusal leads agents to Grep, then read a part.
+- [ ] Launch requests for batch tasks stay short.

@@ -37,10 +37,13 @@ import {
   onLaunched,
   pump,
   recoverTasks,
+  taskOfAgent,
 } from './core/queue'
+import { readGuard } from './core/briefs'
 import { onMeasure, onStopFailure, resumeStandbyTimer } from './core/standby'
 import { getHudOn, getSettings, loadStored } from './core/state'
 import {
+  dispatchBatchTool,
   dispatchTool,
   forgetTool,
   memoryReadTool,
@@ -215,6 +218,16 @@ export const register: Register = on => {
   // ---- Code changes ---------------------------------------------------
 
   // Every edit, the main session's and each agent's, goes to the HUD's diff view.
+  // An orchestrator agent's whole-file read of a big file: refused with a
+  // pointer to search first and read a part (Settings: largeReadKB).
+  on('tool.call', { tool: 'Read' }, async ($, e, next) => {
+    const input = asInput(e)
+    const taskId = typeof input.agentId === 'string' ? taskOfAgent(input.agentId) : undefined
+    if (!taskId) return next(e)
+    const refusal = await readGuard($, input, (await getSettings($)).largeReadKB ?? 40)
+    return refusal ? { deny: refusal } : next(e)
+  }).catch(($, e, next) => next(e))
+
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     const res = await next(e)
     recordTaskEdit(asInput(e), res)
@@ -274,6 +287,7 @@ export const register: Register = on => {
   // ---- Tools ----------------------------------------------------------
 
   on('tool.call', { tool: `${TOOL}dispatch` }, async ($, e) => dispatchTool($, asInput(e)))
+  on('tool.call', { tool: /^mcp__orchestrator__dispatch_batch$/ }, async ($, e) => dispatchBatchTool($, asInput(e)))
   on('tool.call', { tool: `${TOOL}status` }, async ($, e) => statusTool($, asInput(e)))
   on('tool.call', { tool: `${TOOL}projects` }, async $ => projectsTool($))
 

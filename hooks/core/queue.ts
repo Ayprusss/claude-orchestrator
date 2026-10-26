@@ -293,7 +293,7 @@ export async function askLaunches($: E, list: Task[]) {
     const full = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions) + taskReportNote(cfg, task.id)
     // The session dispatched it and has not compacted since: name its prompt, do not repeat it.
     const isKnown = task.isNotify && !task.isFullLaunch && task.contextEpoch === contextEpoch
-    const known = isKnown ? splitKnown(full, task.prompt) : undefined
+    const known = isKnown ? splitKnown(full, task.dispatchPrompt ?? task.prompt) : undefined
     specs.push({
       id: task.id,
       title: task.title,
@@ -368,6 +368,7 @@ export type NewTask = {
   isNotify: boolean
   why?: string
   effort?: string
+  dispatchPrompt?: string
 }
 
 export async function addTasks($: E, specs: NewTask[]): Promise<string[]> {
@@ -461,6 +462,7 @@ export async function retryTask($: E, t: Task) {
       isNotify: t.isNotify,
       ...(t.why ? { why: t.why } : {}),
       ...(t.effort ? { effort: t.effort } : {}),
+      ...(t.dispatchPrompt ? { dispatchPrompt: t.dispatchPrompt } : {}),
     },
   ])
 }
@@ -556,7 +558,7 @@ export async function gateLaunch(
   // A request that named the dispatch prompt: the launch must carry it. If
   // it does not, refuse it and ask again with the prompt in full.
   const wasKnown = task.isNotify && !task.isFullLaunch && task.contextEpoch === contextEpoch
-  if (wasKnown && !promptMatches(e.prompt, task.prompt)) {
+  if (wasKnown && !promptMatches(e.prompt, task.dispatchPrompt ?? task.prompt)) {
     reasked.add(task.id)
     await setTask($, task.id, { isFullLaunch: true })
     $.clock.after(500, () => {

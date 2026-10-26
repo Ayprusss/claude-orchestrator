@@ -468,6 +468,18 @@ export async function renderPane($: E, e: PaneEvent) {
           onSelect={(value: string) => void setSettings({ throttledParallel: Number(value) })}
         />
         <Select
+          key="large-read"
+          label="Agents' whole-file reads"
+          value={String(cfg.largeReadKB ?? 40)}
+          options={[
+            { value: '20', label: 'refuse over 20 KB' },
+            { value: '40', label: 'refuse over 40 KB' },
+            { value: '80', label: 'refuse over 80 KB' },
+            { value: '0', label: 'allow any size' },
+          ]}
+          onSelect={(value: string) => void setSettings({ largeReadKB: Number(value) })}
+        />
+        <Select
           key="standby"
           label="When the usage limit is reached"
           value={cfg.isStandbyOnLimit === false ? 'off' : 'on'}

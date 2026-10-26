@@ -36,6 +36,9 @@ export type OrchTask = {
   contextEpoch?: string
   // The launched prompt did not carry the dispatch prompt: ask with it in full.
   isFullLaunch?: boolean
+  // What the main session wrote as the prompt (dispatch / dispatch_batch),
+  // when the plugin put a brief line before it; the launch check uses it.
+  dispatchPrompt?: string
   // One line on why the task exists (dispatch's optional `why`), kept in the ledger.
   why?: string
   // Set at finish from the task's summary (memory phase 2): the one-paragraph
@@ -76,6 +79,8 @@ export type OrchSettings = OrchMemorySettings & {
   // At or above this % of a usage window (0 = off), run at most throttledParallel tasks.
   throttleAtPercent: number
   throttledParallel: number
+  // An orchestrator agent's whole-file Read over this many KB is refused (0 = off).
+  largeReadKB: number
 }
 
 export type OrchTab = 'sessions' | 'new' | 'projects' | 'memory' | 'settings' | 'docs'
