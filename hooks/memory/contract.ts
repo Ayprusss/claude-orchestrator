@@ -313,6 +313,8 @@ export type MemoryTabActions = {
   setView: (patch: Partial<MemoryView>) => void
   deleteFact: (key: string, factId: string) => void
   keepFact: (key: string, factId: string) => void
+  /** Replaces a fact's text (the Memory tab's edit field). */
+  editFact: (key: string, factId: string, text: string) => void
   consolidate: (key: string) => void
   clearProject: (key: string) => void
 }

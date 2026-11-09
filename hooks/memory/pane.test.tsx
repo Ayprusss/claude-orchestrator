@@ -106,6 +106,7 @@ function harness(on: On, start: Partial<MemoryTabData> = {}, opts = {}) {
     },
     deleteFact: (key, id) => void calls.push(['deleteFact', key, id]),
     keepFact: (key, id) => void calls.push(['keepFact', key, id]),
+    editFact: (key, id, text) => void calls.push(['editFact', key, id, text]),
     consolidate: key => void calls.push(['consolidate', key]),
     clearProject: key => void calls.push(['clearProject', key]),
   }
@@ -322,4 +323,15 @@ test('the docs tab has a Memory page', async ($, on) => {
   expect(body?.text).toContain('# Memory')
   expect(body?.text).toContain('Clear project memory')
   await ui.unmount()
+})
+
+test('a selected fact has an edit field that saves its new text', async ($, on) => {
+  const { calls } = harness(on)
+  const ui = await $.ui.mount({ plugin: 'test', surface: 'desktop', component: 'Pane', requestId: 'mem-test', props: PROPS })
+  await ui.press({ key: 'mem-fact-f_conv01' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Input', key: 'mem-edit-f_conv01' })).toBeDefined()
+  await ui.input({ key: 'mem-edit-f_conv01', text: 'Tests run from the repo root.' })
+  await ui.unmount()
+  expect(calls).toContainEqual(['editFact', 'orch-1234abcd', 'f_conv01', 'Tests run from the repo root.'])
 })

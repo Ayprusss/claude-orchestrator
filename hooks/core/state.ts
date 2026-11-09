@@ -31,11 +31,15 @@ export const DEFAULT_SETTINGS: Settings = {
   isHudPermissionsOn: true,
   hudPermissionWaitSec: 60,
   reportWords: 150,
-  defaultTaskModel: 'sonnet',
-  defaultTaskEffort: 'medium',
+  defaultTaskModel: 'haiku',
+  defaultTaskEffort: '',
   throttleAtPercent: 80,
   throttledParallel: 2,
   largeReadKB: 40,
+  orchestratorModel: 'opus',
+  orchestratorEffort: 'max',
+  verifyRounds: 3,
+  verifySkill: '',
   ...DEFAULT_MEMORY_SETTINGS,
 }
 const DEFAULT_VIEW: View = { tab: 'sessions', selected: '', docPage: 'start' }
@@ -66,7 +70,7 @@ const tasks = atom(
 const settings = atom(
   { plugin: 'orchestrator', key: 'settings' } as const,
   DEFAULT_SETTINGS,
-  { shape: 'orch-settings-9' },
+  { shape: 'orch-settings-10' },
 )
 const view = atom(
   { plugin: 'orchestrator', key: 'view' } as const,

@@ -74,6 +74,7 @@ Starts an independent ${'`claude`'} process in the project's folder and streams 
 - Fully separate session: its own context window, its own working directory.
 - Best for long jobs on different projects.
 - Needs the ${'`claude`'} CLI on the machine that runs this session (see Settings: **Claude binary**).
+- With memory on, it runs with ${'`--output-format stream-json --verbose`'} so its summary can use what it did (the assistant's text, the tools it used, the files it edited), not only its final message. The task's output still shows just the final text. If **Process args** already set an ${'`--output-format`'}, that is left alone and the summary uses the final message only.
 - Extra flags come from Settings: **Process args**. The default is ${'`--permission-mode acceptEdits`'}, so file edits are auto-approved but other tools are not. A headless run cannot answer permission prompts, so widen this only if you trust the task.
 
 ## Choosing
@@ -175,9 +176,14 @@ ${F}
     knowledge.md
     journal/<session id>.jsonl
     transcripts/<task id>.md     only when transcripts are kept
+  projects/_shared/              the same files, for facts that apply to every project
 ${F}
 
 A project's memory is keyed by its folder path, so removing and adding a project again keeps it. Each session writes only its own files, so several sessions can run at once.
+
+**Shared memory.** Preferences that apply everywhere ("always use a worktree for parallel edits") go in the *Shared (all projects)* entry: ${'`remember`'} with project ${'`shared`'}, or pick it in the Memory tab. Its facts join every project's brief and search, and it is consolidated like a project.
+
+**Housekeeping.** At the start of each session, ledgers older than 30 days (never the current one) and transcripts older than 30 days, or beyond the newest 200 per project, are deleted. This needs Node.js on PATH; without it nothing is deleted. Episodes older than 90 days are no longer read.
 
 ## How recall works
 
@@ -193,7 +199,7 @@ A project's memory is keyed by its folder path, so removing and adding a project
 | ${'`note`'} | Add a goal, close or drop one, or record a decision in the ledger |
 | ${'`memory_search`'} | Search facts and past tasks by words or file paths |
 | ${'`memory_read`'} | Read a project's knowledge, inbox or episodes |
-| ${'`remember`'} | Store a lasting fact about a project |
+| ${'`remember`'} | Store a lasting fact about a project, or about all of them (project ${'`shared`'}) |
 | ${'`forget`'} | Remove a fact |
 
 ${'`dispatch`'} also takes an optional ${'`why`'}: one line on why the task exists, kept in the ledger.
@@ -202,7 +208,7 @@ ${'`dispatch`'} also takes an optional ${'`why`'}: one line on why the task exis
 
 Pick a project, then a part:
 
-- **Knowledge**: the curated facts by section, each with its source (*person*, or the task it came from) and date. Press a fact for its details; **delete** removes it. A fact whose files are gone from the project is marked *possibly stale*.
+- **Knowledge**: the curated facts by section, each with its source (*person*, or the task it came from) and date. Press a fact for its details and an **Edit** field: Enter saves your wording, and the fact then counts as yours (kept word for word by consolidation). **delete** removes it. A fact whose files are gone from the project is marked *possibly stale*.
 - **Inbox**: new facts. **keep** writes one to ${'`knowledge.md`'} now; **delete** drops it.
 - **Episodes**: finished tasks, newest first, with outcome and summary. Press one for its files and follow-ups.
 - **Ledger**: this session's goals, decisions and tasks.
@@ -253,11 +259,21 @@ One small-model call per finished task (none for short outputs or with summaries
 - **Permissions.** Headless process tasks cannot ask you for approval. Whatever the process args allow is what they can do.
 - **Mobile.** The mobile surface has no text inputs, so the New, Projects and Settings forms need the terminal or desktop surface.
 
+## Verification
+
+Every agent and process task gets a short verification directive after its prompt: list the conditions for done, check each one yourself (run the project's own tests, type-check, lint or build, and read your diff), fix what fails and check again, up to the number of rounds in Settings, never weakening a test or a condition to pass, and end with ${'`Verified: yes`'} or ${'`Verified: no`'} and one line of evidence per condition.
+
+The orchestrator sets the conditions with the ${'`verify`'} field of ${'`dispatch`'} (and of each ${'`dispatch_batch`'} task); without it the agent checks against the task text. Tasks you queue from the pane or the HUD get the general directive.
+
+No verification skill is published in the marketplace we searched (claude-plugins-official). The closest, *ralph-loop*, re-runs one prompt through a Stop hook in the main session and cannot be used from a subagent. If you install a skill that does this, put its name in Settings: **Verification skill**; the directive then says to use it when the session has it, and to follow the steps otherwise. Rounds can be turned off in Settings.
+
 ## Saving tokens
 
 Settings that keep many agents from draining your usage limits:
 
-- **Default task model / effort** (Sonnet, medium): used by any task queued without its own. Ask for Opus on the tasks that need it.
+- **Default task model / effort** (Haiku, Claude Code's default effort): used by any task queued without its own. An agent only carries out the steps it is given, so the orchestrator should spell them out; ask for a bigger model only for a task that needs real reasoning.
+- **Orchestrator model / effort** (Opus, max): set on the main session once, when a session with a screen starts (not for headless process tasks). Choose *leave as it is* to keep your own choice. Changing the model mid-session from the HUD still works.
+- **Agents verify their work** (up to 3 rounds): see *Verification* below.
 - **Task report length** (150 words): every task is told to end with a short reply and put longer detail in a report file, so each finished task adds little to the main session's context.
 - **Slow down near the usage limit** (80%) and **Tasks at once when slowed** (2): past that share of a usage window, fewer tasks run at once. Standby still takes over at 100%.
 - **Briefs:** ${'`dispatch`'} takes ${'`reads`'}, a list of files and plan sections (${'`PLAN.md#Unit S`'}). The orchestrator writes the agent a short brief file with only those sections, so it does not read the whole plan. ${'`dispatch_batch`'} queues a fan-out with its shared context written once, to one file every task reads.

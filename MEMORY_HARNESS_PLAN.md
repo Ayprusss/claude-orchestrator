@@ -714,9 +714,18 @@ All three phases were built at once by six parallel agents (§16.1), then merged
 - [ ] A finished agent task writes an episode with a summary and its edited files; the next task in that project gets a brief.
 - [ ] `/compact` keeps the ledger; `/clear` carries unfinished goals into the new session.
 
-### 18.4 Not built yet
+### 18.4 Not built yet (all four since built; see 18.5)
 
 - Pruning old ledgers (30 days) and transcripts (30 days / 200 per project) from §9.4. Journals rotate, and episodes over 90 days are filtered on read, but nothing deletes old files.
 - Editing a fact in the Memory tab.
 - Fuller summaries for process tasks (Q6).
 - A shared, cross-project preferences file (Q7).
+
+### 18.5 The four follow-ups, built
+
+- **Pruning** (`hooks/memory/prune.ts`, `pruneOld` in `harness.ts`): at the start of each session, ledgers over 30 days old (never this session's or the one it carried from) and transcripts over 30 days old or beyond the newest 200 per project are deleted. `$.fs` has no delete, so Node does it, for paths checked to be under the memory folder.
+- **Editing a fact** (`editFact`): a selected fact in the Memory tab has an Edit field. A knowledge fact is rewritten in `knowledge.md` under the lock; an inbox fact is forgotten and replaced by a new one. Either way it becomes the person's own fact.
+- **Fuller summaries for process tasks** (`hooks/memory/stream.ts`, `core/queue.ts`): with memory on, process tasks run with `--output-format stream-json --verbose` (unless Process args already set a format). The parser gives the summary a transcript (assistant text and tool names) and the files edited. The task's visible output is still the final text. Checked against a real `claude -p` run (2.1.319).
+- **Shared memory** (`SHARED_KEY = '_shared'`): one extra memory entry, *Shared (all projects)*, reachable as project `shared` in the tools and in the Memory tab. Its facts (not episodes) join every project's brief and index. Resolves Q7 as a per-install shared store rather than a file of its own.
+
+Still to check live: the same items as 18.3, plus that a real process task's summary is richer than before and that a pruning pass deletes only what it should.

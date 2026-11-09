@@ -48,6 +48,10 @@ Plugins can't change the mode on demand, so a mode switch takes effect when you 
 
 The HUD shows each edit as a diff. A small window pops up beside the agent that made it, linked to it by a line, and Comms lists every change. Drag a window's edges or corner to resize it, and its title to move it. Close it with ✕, or turn pop-ups off in Settings. Edits by `process` tasks are not shown.
 
+### Models and verification
+
+Agents run on Haiku by default (they carry out steps the orchestrator gives them), and the main session is set to Opus at max effort when a session starts; both are in Settings. Every agent is also told to verify its own work against the conditions the orchestrator set with `dispatch`'s `verify` field, fixing and re-checking for up to 3 rounds before it reports. No verification skill was found in the marketplace, so the orchestrator ships its own directive; set **Verification skill** in Settings to use an installed one instead.
+
 ### All-done ping
 
 When the main session and every task have finished, the orchestrator plays a chime (`assets/ping.wav`) on your machine, even with the HUD closed. Turn it off in Settings.
@@ -70,11 +74,15 @@ The orchestrator keeps a memory, so its work survives compaction, `/clear`, relo
 - Per **project**: a summary of every finished task, the facts those summaries found, and a curated `knowledge.md`. Each new task in the project starts with a short brief from it, marked as reference material.
 - Tools for the main session: `note`, `memory_search`, `memory_read`, `remember` and `forget`.
 
+- A **Shared (all projects)** memory for preferences that apply everywhere; its facts join every project's brief.
+- Process tasks (`claude -p`) are run with stream output while memory is on, so their summaries see the tools they used and the files they edited.
+- Old ledgers and transcripts (over 30 days) are deleted at the start of a session.
+
 It is stored in its own folder, `~/.claude/orchestrator-memory/` by default, never in your projects or in Claude Code's own memory. Secrets are scrubbed before anything is written. Summaries use a small model (`haiku` by default), one call per finished task.
 
 Settings: **Memory** (on/off), **Memory folder**, **Task summaries** (short, detailed or off), **Summary model**, **Task transcripts** (kept or not) and **Brief for new tasks** (a cap in characters).
 
-The pane's **Memory** tab shows everything that is stored: knowledge, inbox, past tasks and the ledger. Delete a fact there, press **Consolidate** to merge new facts into `knowledge.md`, or **Clear project memory** (twice, to confirm) to delete a project's memory. Turning memory off stops all reads and writes but keeps what is on disk; delete the folder to remove it all. The **Memory** page of the Docs tab has details.
+The pane's **Memory** tab shows everything that is stored: knowledge, inbox, past tasks and the ledger. Edit or delete a fact there, press **Consolidate** to merge new facts into `knowledge.md`, or **Clear project memory** (twice, to confirm) to delete a project's memory. Turning memory off stops all reads and writes but keeps what is on disk; delete the folder to remove it all. The **Memory** page of the Docs tab has details.
 
 ## Notes
 

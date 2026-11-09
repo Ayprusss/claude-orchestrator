@@ -16,6 +16,7 @@ import {
 import { isResumed } from './controls/history'
 import { noteMode } from './controls/permissions'
 import { noteEffort } from './controls/session'
+import { applyOrchestratorModel } from './core/orchestrator'
 import {
   HUD_CONTEXT,
   askPermissionInHud,
@@ -79,6 +80,7 @@ export const register: Register = on => {
     await loadStored($)
     await recoverTasks($)
     await registerTools($)
+    await applyOrchestratorModel($)
     try {
       await memEnsureStarted($, await getSettings($))
     } catch (err) {
@@ -123,6 +125,7 @@ export const register: Register = on => {
         await markBusy($)
         // A surface may attach only after session.start (the desktop app).
         await memEnsureStarted($, await getSettings($))
+        await applyOrchestratorModel($)
       } catch {
         // Best effort.
       }

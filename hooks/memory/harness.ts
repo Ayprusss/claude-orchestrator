@@ -45,7 +45,8 @@ import {
   pickCarryOver,
   renderSnapshot,
 } from './ledger'
-import { memoryPaths, normalizePath, projectKey, resolveMemoryRoot } from './paths'
+import { SHARED_KEY, memoryPaths, normalizePath, projectKey, resolveMemoryRoot } from './paths'
+import { LEDGER_KEEP_MS, TRANSCRIPTS_PER_PROJECT, TRANSCRIPT_KEEP_MS, isUnder, pickPrunable } from './prune'
 import { buildBrief, withBrief } from './recall'
 import { scrub } from './scrub'
 import { buildIndex, search } from './search'
@@ -89,6 +90,14 @@ let saveTimer: { cancel: () => void } | undefined
 const taskFiles = new Map<string, Set<string>>()
 let chain: Promise<unknown> = Promise.resolve()
 const consolidating = new Set<string>()
+// What a process task's stream gave (transcript, edited files), until it is captured.
+const processStash = new Map<string, { transcript: ApiMessageLike[]; files: string[] }>()
+
+/** The queue hands over a finished process task's parsed stream (see stream.ts). */
+export function stashProcessCapture(taskId: string, capture: { transcript: ApiMessageLike[]; files: string[] }) {
+  if (processStash.size > 50) processStash.clear()
+  processStash.set(taskId, capture)
+}
 
 const uid6 = () => Math.random().toString(36).slice(2, 8).padEnd(6, '0')
 const clip = (text: string, cap: number) => (text.length > cap ? `${text.slice(0, cap)}…` : text)
@@ -183,6 +192,62 @@ export async function ensureStarted($: E, cfg: OrchSettings, isForced = false): 
   isActive = true
   sessionId = await $.session.id()
   await initLedger($)
+  void enqueue(() => pruneOld($))
+}
+
+/**
+ * Deletes ledgers and transcripts past their keep time (plan §9.4): ledgers
+ * after 30 days (never this session's or the one it carried from), transcripts
+ * after 30 days or beyond the newest 200 per project. `$.fs` has no delete, so
+ * Node does it, for paths the code checked to be under the memory folder.
+ * Returns how many files it asked Node to delete.
+ */
+export async function pruneOld($: E): Promise<number> {
+  if (!isActive || !paths) return 0
+  const fs = fsPort($)
+  const now = await $.clock.now()
+  const doomed: string[] = []
+  try {
+    const keep = [`${sessionId}.json`, ...(carried ? [`${carried.sessionId}.json`] : [])]
+    const entries = await fs.list(paths.ledgersDir)
+    for (const n of pickPrunable(entries, now, { suffix: '.json', maxAgeMs: LEDGER_KEEP_MS, skip: keep })) {
+      doomed.push(`${paths.ledgersDir}/${n}`)
+    }
+  } catch {
+    // No ledgers folder yet.
+  }
+  try {
+    for (const proj of await fs.list(`${paths.root}/projects`)) {
+      if (proj.kind !== 'dir') continue
+      const dir = `${paths.projectDir(proj.name)}/transcripts`
+      try {
+        const entries = await fs.list(dir)
+        for (const n of pickPrunable(entries, now, {
+          suffix: '.md',
+          maxAgeMs: TRANSCRIPT_KEEP_MS,
+          keepNewest: TRANSCRIPTS_PER_PROJECT,
+        })) {
+          doomed.push(`${dir}/${n}`)
+        }
+      } catch {
+        // No transcripts for this project.
+      }
+    }
+  } catch {
+    // No projects folder yet.
+  }
+  const root = paths.root
+  const safe = doomed.filter(p => isUnder(root, p))
+  const script = 'const fs=require("fs");for(const p of process.argv.slice(1)){try{fs.rmSync(p,{force:true})}catch{}}'
+  try {
+    for (let i = 0; i < safe.length; i += 40) {
+      await $.process.run(['node', '-e', script, ...safe.slice(i, i + 40)], { timeoutMs: 15_000 })
+    }
+  } catch {
+    // Without Node nothing is deleted; it is tried again at the next start.
+    return 0
+  }
+  return safe.length
 }
 
 /** Settings changed: memory on/off or another folder starts it over. */
@@ -384,12 +449,16 @@ export type CaptureHooks = {
  * blocking the caller. Killed tasks leave nothing.
  */
 export function captureTask($: E, task: OrchTask, project: OrchProject | undefined, cfg: OrchSettings, hooks: CaptureHooks) {
-  const files = [...(taskFiles.get(task.id) ?? [])]
+  const stash = processStash.get(task.id)
+  processStash.delete(task.id)
+  const files = [...new Set([...(taskFiles.get(task.id) ?? []), ...(stash?.files ?? [])])].slice(0, 200)
   taskFiles.delete(task.id)
   if (!isActive || !paths || !queue || !project) return
   if (task.status !== 'done' && task.status !== 'failed') return
   // Read the agent's transcript now, before the engine lets it go.
-  const transcriptP: Promise<ApiMessageLike[] | undefined> = task.agentId
+  const transcriptP: Promise<ApiMessageLike[] | undefined> = stash?.transcript.length
+    ? Promise.resolve(stash.transcript)
+    : task.agentId
     ? $.session
         .messages({ agentId: task.agentId, as: 'api' })
         .then(x => x as unknown as ApiMessageLike[])
@@ -517,6 +586,23 @@ async function loadProject($: E, key: string): Promise<ProjectMemory> {
   return { lines: pruneEpisodes(lines, now), knowledge, meta }
 }
 
+/** A project's memory with the shared memory's facts added (episodes stay the project's own). */
+export function mergeMemory(own: ProjectMemory, shared: ProjectMemory) {
+  const sharedFacts = shared.knowledge?.facts ?? []
+  const knowledge: KnowledgeDoc | undefined =
+    own.knowledge || sharedFacts.length
+      ? {
+          ...(own.knowledge ?? { project: '', consolidatedAt: 0, facts: [] }),
+          facts: [...(own.knowledge?.facts ?? []), ...sharedFacts],
+        }
+      : undefined
+  return {
+    lines: [...own.lines, ...shared.lines.filter(l => l.kind !== 'episode')],
+    knowledge,
+    consolidatedIds: [...(own.meta?.consolidatedFactIds ?? []), ...(shared.meta?.consolidatedFactIds ?? [])],
+  }
+}
+
 async function indexFor($: E, key: string) {
   const m = await loadProject($, key)
   return buildIndex(m.lines, m.knowledge, await $.clock.now(), m.meta?.consolidatedFactIds)
@@ -530,11 +616,12 @@ export async function withMemory($: E, project: OrchProject | undefined, task: {
   if (!isActive || !paths || !project || cfg.recallBudgetChars <= 0) return task.prompt
   try {
     const key = projectKey(project.path)
-    const m = await loadProject($, key)
-    const index = buildIndex(m.lines, m.knowledge, await $.clock.now(), m.meta?.consolidatedFactIds)
+    // The memory shared by every project joins the project's own.
+    const m = mergeMemory(await loadProject($, key), await loadProject($, SHARED_KEY))
+    const index = buildIndex(m.lines, m.knowledge, await $.clock.now(), m.consolidatedIds)
     // The person's own preferences apply to every task, whatever its words:
     // matching against them too puts up to 3 into every brief.
-    const facts = [...(m.knowledge?.facts ?? []), ...inboxFacts(m.lines, m.knowledge, m.meta?.consolidatedFactIds)]
+    const facts = [...(m.knowledge?.facts ?? []), ...inboxFacts(m.lines, m.knowledge, m.consolidatedIds)]
     const prefs = facts
       .filter(f => f.kind === 'preference' && f.origin === 'person' && !f.isStale)
       .sort((a, b) => b.at - a.at)
@@ -588,6 +675,10 @@ export async function consolidateNow($: E, key: string, project: OrchProject, cf
 
 export type MemoryProject = { key: string; name: string; path: string }
 
+/** The name of the memory every project shares. */
+export const SHARED_NAME = 'Shared (all projects)'
+const SHARED_ALIASES = ['shared', 'all', 'global', 'everywhere', 'all projects']
+
 /** Registered projects plus any with memory on disk, by key. */
 export async function memoryProjects($: E, registered: readonly OrchProject[]): Promise<MemoryProject[]> {
   const out = new Map<string, MemoryProject>()
@@ -600,7 +691,7 @@ export async function memoryProjects($: E, registered: readonly OrchProject[]): 
     try {
       const dir = `${paths.root}/projects`
       for (const x of await fs.list(dir)) {
-        if (x.kind !== 'dir' || out.has(x.name)) continue
+        if (x.kind !== 'dir' || out.has(x.name) || x.name === SHARED_KEY) continue
         const meta = await readJson<ProjectMeta>(fs, paths.metaFile(x.name))
         out.set(x.name, { key: x.name, name: meta?.name ?? x.name, path: meta?.path ?? '' })
       }
@@ -608,6 +699,8 @@ export async function memoryProjects($: E, registered: readonly OrchProject[]): 
       // No projects folder yet.
     }
   }
+  // Last, so the Memory tab opens on a real project.
+  out.set(SHARED_KEY, { key: SHARED_KEY, name: SHARED_NAME, path: '' })
   return [...out.values()]
 }
 
@@ -618,7 +711,8 @@ export function findProject(list: readonly MemoryProject[], ref: string): Memory
   const low = r.toLowerCase()
   return (
     list.find(p => p.key === r || p.name.toLowerCase() === low) ??
-    list.find(p => p.path && normalizePath(p.path) === normalizePath(r))
+    list.find(p => p.path && normalizePath(p.path) === normalizePath(r)) ??
+    (SHARED_ALIASES.includes(low) ? list.find(p => p.key === SHARED_KEY) : undefined)
   )
 }
 
@@ -744,6 +838,46 @@ export async function deleteFact($: E, key: string, factId: string) {
 }
 
 /**
+ * Changes a fact's text from the Memory tab. A fact in knowledge.md is
+ * rewritten there, under the lock; an inbox fact is replaced by a new one
+ * (the old id is forgotten). Either way it becomes the person's own fact,
+ * which consolidation keeps unchanged.
+ */
+export async function editFact($: E, key: string, factId: string, newText: string): Promise<string> {
+  if (!isActive || !paths || !queue) return OFF
+  const text = clip(scrub(newText.replace(/\s+/g, ' ').trim()), 300)
+  if (!text) return 'A fact cannot be empty; use delete to remove it.'
+  const fs = fsPort($)
+  const now = await $.clock.now()
+  const lock = paths.lockFile(key)
+  if (!(await filesModule.acquireLock(fs, lock, sessionId, now, 60_000))) return 'Another session is writing this memory; try again in a moment.'
+  try {
+    const m = await loadProject($, key)
+    const inKnowledge = m.knowledge?.facts.find(f => f.id === factId)
+    if (inKnowledge && m.knowledge) {
+      const { isStale: _stale, ...rest } = inKnowledge
+      const edited: Fact = { ...rest, text, origin: 'person', at: now }
+      await fs.write(
+        paths.knowledgeFile(key),
+        renderKnowledge({ ...m.knowledge, facts: m.knowledge.facts.map(f => (f.id === factId ? edited : f)) }),
+      )
+      return `Edited ${factId}.`
+    }
+    const inInbox = inboxFacts(m.lines, m.knowledge, m.meta?.consolidatedFactIds).find(f => f.id === factId)
+    if (!inInbox) return 'That fact is gone.'
+    const { isStale: _s, ...rest } = inInbox
+    const edited: Fact = { ...rest, id: `f_${uid6()}`, text, origin: 'person', at: now, sessionId }
+    await appendJournal(fs, queue, paths, key, sessionId, [
+      { kind: 'forget', v: 1, factId, at: now },
+      { kind: 'fact', v: 1, fact: edited },
+    ])
+    return `Edited ${factId} (now ${edited.id}).`
+  } finally {
+    await filesModule.releaseLock(fs, lock, sessionId)
+  }
+}
+
+/**
  * The inbox's Keep: the fact goes into knowledge.md now, under the lock.
  * Goes through consolidate's own format, so a hand-kept fact reads back the same.
  */
@@ -776,7 +910,7 @@ export async function keepFact($: E, key: string, factId: string): Promise<strin
  */
 export async function clearProject($: E, key: string): Promise<string> {
   if (!isActive || !paths) return OFF
-  if (!/^[a-z0-9-]+$/.test(key)) return 'Not a project memory key.'
+  if (!/^[a-z0-9_-]+$/.test(key)) return 'Not a project memory key.'
   const dir = paths.projectDir(key)
   if (normalizePath(dir) !== `${normalizePath(paths.root)}/projects/${key}`) return 'Refused: unexpected memory folder.'
   await queue?.flush()
