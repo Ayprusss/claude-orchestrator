@@ -30,6 +30,12 @@ const READS_SCHEMA = {
     'Optional reading list, relative to the project: "path" for a file, "path#Heading" for one Markdown section. The sections go into a brief file the agent reads instead of the whole document.',
 }
 
+const VERIFY_SCHEMA = {
+  type: 'string',
+  description:
+    'The conditions that mean this task is done, as a short list (for example "claude plugin test . passes; no type errors; the new flag is documented"). The agent checks its own work against them and fixes it until they hold, up to the Verification rounds in Settings. Always set this: without it the agent only checks the task text.',
+}
+
 /** Registers the tools at session.start. */
 export async function registerTools($: E) {
   await $.tool.register({
@@ -53,7 +59,7 @@ export async function registerTools($: E) {
           description:
             'agent: a subagent of this session. process: a separate headless claude process. Default agent.',
         },
-        model: { type: 'string', description: 'Optional model alias.' },
+        model: { type: 'string', description: 'Optional model alias. Leave it out: agents default to Haiku, which only has to carry out the steps you give it. Name a larger model only for a task that needs real reasoning.' },
         why: {
           type: 'string',
           description: 'One line on why this task exists. Kept in the orchestrator ledger, so it survives compaction.',
@@ -64,6 +70,7 @@ export async function registerTools($: E) {
           description: "Optional effort level for the task's agent or process. Leave it out for its default.",
         },
         reads: READS_SCHEMA,
+        verify: VERIFY_SCHEMA,
       },
       required: ['project', 'title', 'prompt'],
     },
@@ -91,6 +98,7 @@ export async function registerTools($: E) {
               effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
               why: { type: 'string' },
               reads: READS_SCHEMA,
+              verify: VERIFY_SCHEMA,
             },
             required: ['title', 'prompt'],
           },
@@ -154,7 +162,7 @@ export async function registerTools($: E) {
     inputSchema: {
       type: 'object',
       properties: {
-        project: { type: 'string', description: 'Project name or path.' },
+        project: { type: 'string', description: 'Project name or path, or "shared" for facts that apply to every project.' },
         part: { type: 'string', enum: ['knowledge', 'inbox', 'episodes'] },
       },
       required: ['project'],
@@ -168,7 +176,7 @@ export async function registerTools($: E) {
     inputSchema: {
       type: 'object',
       properties: {
-        project: { type: 'string', description: 'Project name or path.' },
+        project: { type: 'string', description: 'Project name or path, or "shared" for facts that apply to every project.' },
         text: { type: 'string', description: 'One sentence, under 300 characters.' },
         kind: { type: 'string', enum: ['convention', 'gotcha', 'command', 'architecture', 'preference'] },
         isFromPerson: { type: 'boolean' },
@@ -183,7 +191,7 @@ export async function registerTools($: E) {
     inputSchema: {
       type: 'object',
       properties: {
-        project: { type: 'string', description: 'Project name or path.' },
+        project: { type: 'string', description: 'Project name or path, or "shared" for facts that apply to every project.' },
         id: { type: 'string' },
       },
       required: ['project', 'id'],
@@ -226,6 +234,7 @@ async function taskSpec($: E, project: Project, input: Input, shared?: { path?: 
     isNotify: true,
     ...(normalizeEffort(input.effort) ? { effort: normalizeEffort(input.effort) } : {}),
     ...(typeof input.why === 'string' && input.why.trim() ? { why: input.why.trim().slice(0, 200) } : {}),
+    ...(typeof input.verify === 'string' && input.verify.trim() ? { verify: input.verify.trim().slice(0, 800) } : {}),
   }
 }
 

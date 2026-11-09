@@ -169,7 +169,7 @@ export function sortLedgerTasks(list: readonly LedgerTask[]): LedgerTask[] {
  * data for that same key.
  */
 export function memoryTab(els: MemoryElements, data: MemoryTabData, actions: MemoryTabActions, opts: MemoryTabOptions = {}) {
-  const { Box, Text, Button, Select } = els
+  const { Box, Text, Button, Select, Input } = els
   const view = data.view
   const key = pickProjectKey(view, data.projects)
   const project = data.projects.find(p => p.key === key)
@@ -275,6 +275,15 @@ export function memoryTab(els: MemoryElements, data: MemoryTabData, actions: Mem
         </Text>
         {f.paths && f.paths.length > 0 && <Text dimColor>Files: {f.paths.join(', ')}</Text>}
         {f.isStale && <Text color="yellow">The files it names are gone from the project folder.</Text>}
+        {Input && opts.hasForms !== false && (
+          <Input
+            key={`mem-edit-${f.id}`}
+            label="Edit"
+            value={f.text}
+            submitLabel="save"
+            onSubmit={(value: string) => actions.editFact(key, f.id, value)}
+          />
+        )}
       </Box>
     )
   }

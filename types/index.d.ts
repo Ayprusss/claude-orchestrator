@@ -19,6 +19,8 @@ export type OrchTask = {
   // Effort level for the task's agent or process: '' (its default) or
   // 'low' | 'medium' | 'high' | 'xhigh' | 'max'.
   effort?: string
+  // The conditions the orchestrator set for the task; its agent verifies against them.
+  verify?: string
   status: OrchStatus
   output: string
   agentId?: string
@@ -81,6 +83,14 @@ export type OrchSettings = OrchMemorySettings & {
   throttledParallel: number
   // An orchestrator agent's whole-file Read over this many KB is refused (0 = off).
   largeReadKB: number
+  // The main session's own model and effort, set once at the start of a session
+  // that has a screen ('' = leave as it is).
+  orchestratorModel: string
+  orchestratorEffort: string
+  // Every agent is told to check its own work for up to this many rounds (0 = off),
+  // and to use this skill for it when the session has one ('' = none).
+  verifyRounds: number
+  verifySkill: string
 }
 
 export type OrchTab = 'sessions' | 'new' | 'projects' | 'memory' | 'settings' | 'docs'

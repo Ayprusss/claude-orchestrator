@@ -40,6 +40,9 @@ function slugOf(normalized: string): string {
   return slug || 'project'
 }
 
+/** The memory shared by every project (preferences that apply everywhere). Real keys end in a hash, so none collides. */
+export const SHARED_KEY = '_shared'
+
 /** `<slug>-<hash8>`; stable for the same normalized path. */
 export function projectKey(path: string): string {
   const normalized = normalizePath(path)

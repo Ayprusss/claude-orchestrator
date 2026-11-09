@@ -1,4 +1,5 @@
 import type { On } from 'claude-code'
+import { mergeMemory } from './harness'
 import { expect, mock, test } from 'claude-code/testing'
 
 // The wiring, through the plugin's own tools: the ledger, `why`, and memory off.
@@ -116,9 +117,9 @@ test('dispatch keeps a task model and effort; a bad effort falls back to the def
     effort: 'ultra; rm -rf /',
   })
   const id2 = /Queued task ([a-z0-9]{6})/.exec(text(q2))?.[1]
-  // A bad effort is dropped, and the task gets the Settings defaults instead.
+  // A bad effort is dropped, and the task gets the Settings defaults instead (Haiku).
   const st2 = text(await call($, { tool: 'mcp__orchestrator__status', id: id2 }))
-  expect(st2).toContain('Model: sonnet · effort medium')
+  expect(st2).toContain('Model: haiku')
   expect(st2).not.toContain('ultra')
 })
 
@@ -192,4 +193,123 @@ test('a headless run (a process task) keeps no memory: nothing is written', asyn
   await call($, { tool: 'mcp__orchestrator__dispatch', project: '/work/demo', title: 't', prompt: 'p' })
   await clock.advance(1000)
   expect([...files.keys()]).toEqual([])
+})
+
+test('the shared memory is searchable by its alias', async ($, on) => {
+  session(on)
+  const r = await call($, {
+    tool: 'mcp__orchestrator__remember',
+    project: 'shared',
+    text: 'Always use a git worktree for parallel edits.',
+    kind: 'preference',
+    isFromPerson: true,
+  })
+  expect(text(r)).toContain('Shared (all projects)')
+  const found = await call($, { tool: 'mcp__orchestrator__memory_search', query: 'worktree', project: 'all' })
+  expect(text(found)).toContain('Always use a git worktree')
+  const unscoped = await call($, { tool: 'mcp__orchestrator__memory_search', query: 'worktree' })
+  expect(text(unscoped)).toContain('Always use a git worktree')
+})
+
+test('a project’s memory takes in the shared facts but not its episodes', () => {
+  const fact = (id: string) => ({ id, text: id, kind: 'preference' as const, origin: 'person' as const, sessionId: 's', at: 1 })
+  const episode = { taskId: 't', sessionId: 's', title: 't', prompt: '', backend: 'agent' as const, status: 'done' as const, outcome: 'succeeded' as const, summary: '', isRawOutput: false, files: [], followups: [], interruptions: 0, endedAt: 1 }
+  const own = {
+    lines: [{ kind: 'fact' as const, v: 1 as const, fact: fact('f_own') }],
+    knowledge: undefined,
+    meta: { path: '/p', name: 'p', createdAt: 0, consolidatedFactIds: ['f_a'] },
+  }
+  const shared = {
+    lines: [{ kind: 'fact' as const, v: 1 as const, fact: fact('f_sh') }, { kind: 'episode' as const, v: 1 as const, episode }],
+    knowledge: { project: 'shared', consolidatedAt: 1, facts: [fact('f_shk')] },
+    meta: { path: '', name: 's', createdAt: 0, consolidatedFactIds: ['f_b'] },
+  }
+  const m = mergeMemory(own, shared)
+  expect(m.lines.map(l => l.kind)).toEqual(['fact', 'fact'])
+  expect(m.knowledge?.facts.map(f => f.id)).toEqual(['f_shk'])
+  expect(m.consolidatedIds).toEqual(['f_a', 'f_b'])
+  expect(mergeMemory({ lines: [], knowledge: undefined, meta: undefined }, { lines: [], knowledge: undefined, meta: undefined }).knowledge).toBeUndefined()
+})
+
+const PANE = {
+  plugin: 'orchestrator',
+  component: 'Pane',
+  requestId: 'orchestrator',
+  props: { title: 'Orchestrator', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+} as const
+
+test('editing an inbox fact in the Memory tab replaces it with the person’s own text', async ($, on) => {
+  session(on)
+  await call($, { tool: 'mcp__orchestrator__dispatch', project: '/work/demo', title: 't', prompt: 'p' })
+  const r = await call($, { tool: 'mcp__orchestrator__remember', project: 'demo', text: 'Run tests with npm test.', kind: 'command' })
+  const id = /Remembered (f_[a-z0-9]+)/.exec(text(r))?.[1] ?? ''
+  expect(id).not.toBe('')
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'tab-memory' })
+  await ui.press({ key: 'mem-part-inbox' })
+  await ui.press({ key: `mem-fact-${id}` })
+  await ui.input({ key: `mem-edit-${id}`, text: 'Run tests with claude plugin test .' })
+  await ui.unmount()
+  const read = text(await call($, { tool: 'mcp__orchestrator__memory_read', project: 'demo', part: 'inbox' }))
+  expect(read).toContain('claude plugin test .')
+  expect(read).toContain('from the person')
+  expect(read).not.toContain('npm test')
+})
+
+test('at start, old ledgers are deleted through Node, never this session’s', async ($, on) => {
+  const { clock, files } = session(on)
+  const argvs: string[][] = []
+  on('process.run', (_, e) => {
+    argvs.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const dir = '/home/t/.claude/orchestrator-memory/ledgers'
+  files.set(`${dir}/old.json`, '{}')
+  await call($, { tool: 'mcp__orchestrator__note', action: 'goal', text: 'keep me' })
+  await clock.advance(1000)
+  const all = argvs.flat().join(' ').replaceAll(String.fromCharCode(92), '/')
+  expect(all).toContain('ledgers/old.json')
+  expect(all).not.toContain('ledgers/s1.json')
+})
+
+test('a process task’s stream gives its episode a transcript and the files it edited', async ($, on) => {
+  const { clock, files } = session(on)
+  const argvs: string[][] = []
+  const line = (o: unknown) => `${JSON.stringify(o)}\n`
+  on('process.spawn', async function* (_, e) {
+    argvs.push([...e.argv])
+    yield { stream: 'stdout' as const, text: line({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: '/work/demo/b.txt' } }] } }) }
+    yield { stream: 'stdout' as const, text: line({ type: 'result', result: 'Wrote b.txt.' }) }
+    return { value: { code: 0, signal: null } }
+  })
+  await call($, { tool: 'mcp__orchestrator__dispatch', project: '/work/demo', title: 'write b', prompt: 'Write b.txt.', backend: 'process' })
+  await clock.advance(2000)
+  expect(argvs[0]).toContain('stream-json')
+  const journal = [...files.entries()].filter(([k]) => k.includes('/journal/'))
+  const episode = journal.flatMap(([, v]) => v.split('\n')).find(l => l.includes('"kind":"episode"'))
+  expect(episode).toBeDefined()
+  expect(episode).toContain('/work/demo/b.txt')
+})
+
+test('an agent is told to verify its work against the conditions the orchestrator set', async ($, on) => {
+  const { clock } = session(on)
+  const prompts: string[] = []
+  on('process.spawn', async function* (_, e) {
+    prompts.push(String(e.argv[2]))
+    return { value: { code: 0, signal: null } }
+  })
+  await call($, {
+    tool: 'mcp__orchestrator__dispatch',
+    project: '/work/demo',
+    title: 'v',
+    prompt: 'Add the flag.',
+    backend: 'process',
+    verify: 'claude plugin test . passes; the flag is documented',
+  })
+  await call($, { tool: 'mcp__orchestrator__dispatch', project: '/work/demo', title: 'w', prompt: 'Other.', backend: 'process' })
+  await clock.advance(2000)
+  expect(prompts[0]).toContain('Add the flag.')
+  expect(prompts[0]).toContain('Done means all of: claude plugin test . passes; the flag is documented')
+  expect(prompts[0]).toContain('Verified: yes')
+  expect(prompts[1]).toContain('everything the task above asks for')
 })

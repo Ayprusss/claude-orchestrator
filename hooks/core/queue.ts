@@ -12,12 +12,16 @@ import type {
   OrchStatus as TaskStatus,
 } from '../../types'
 import * as hud from '../hud'
+import { createStreamParser, hasOutputFormat } from '../memory/stream'
 import { promptMatches, launchRequest, splitKnown } from '../launch'
 import type { LaunchSpec } from '../launch'
 import { LAUNCH_TAG, reportNote } from '../launch'
+import { verifyNote } from '../verify'
 import {
   captureTask as memCaptureTask,
   ensureStarted as memEnsureStarted,
+  isMemoryActive as memIsActive,
+  stashProcessCapture as memStashProcess,
   memoryRoot as memMemoryRoot,
   onSettings as memOnSettings,
   onTaskAdded as memOnTaskAdded,
@@ -81,6 +85,11 @@ export function releaseTask(id: string, agentId?: string) {
 function taskReportNote(cfg: Settings, taskId: string): string {
   const root = memMemoryRoot()
   return reportNote(cfg.reportWords ?? 150, root ? `${root}/reports/${taskId}.md` : undefined)
+}
+
+/** The verification directive (verify.ts), with the task's own conditions. */
+function taskVerifyNote(cfg: Settings, task: Task): string {
+  return verifyNote({ rounds: cfg.verifyRounds ?? 3, criteria: task.verify, skill: cfg.verifySkill })
 }
 
 /** Memory starts at session.start, or at first use when no surface was there yet. */
@@ -162,7 +171,7 @@ export async function launch($: E, task: Task) {
     return
   }
 
-  const prompt = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions) + taskReportNote(cfg, task.id)
+  const prompt = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions) + taskVerifyNote(cfg, task) + taskReportNote(cfg, task.id)
   if (task.backend === 'agent') {
     try {
       const res = await $.agent.spawn({
@@ -200,6 +209,11 @@ export async function launch($: E, task: Task) {
     ...splitArgs(cfg.processArgs),
   ]
   argv.push(...processModelArgs(task.model, normalizeEffort(task.effort)))
+  // With memory on, the run's events give the summary its transcript and edited
+  // files (plain `-p` prints only the final message). Not when the person's own
+  // flags already choose an output format.
+  const parser = memIsActive() && !hasOutputFormat(splitArgs(cfg.processArgs)) ? createStreamParser() : undefined
+  if (parser) argv.push('--output-format', 'stream-json', '--verbose')
   let buf = ''
   let flushedAt = 0
   try {
@@ -212,13 +226,21 @@ export async function launch($: E, task: Task) {
         code = step.value.code
         break
       }
-      buf = clip(buf + step.value.text, OUTPUT_CAP)
+      if (parser) {
+        parser.push(step.value.text)
+        buf = clip(parser.text(), OUTPUT_CAP)
+      } else buf = clip(buf + step.value.text, OUTPUT_CAP)
       if (killed.has(task.id)) break
       const now = await $.clock.now()
       if (now - flushedAt > 400) {
         flushedAt = now
         await setTask($, task.id, { output: buf })
       }
+    }
+    if (parser) {
+      parser.end()
+      buf = clip(parser.text(), OUTPUT_CAP)
+      memStashProcess(task.id, { transcript: parser.transcript(), files: parser.files() })
     }
     if (killed.has(task.id)) await finish($, task.id, 'killed', buf)
     else if (code !== 0 && looksLikeLimit(buf)) {
@@ -290,7 +312,7 @@ export async function askLaunches($: E, list: Task[]) {
       continue
     }
     await setTask($, task.id, { launchAskedAt: now, launchAsks: (task.launchAsks ?? 0) + 1 })
-    const full = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions) + taskReportNote(cfg, task.id)
+    const full = resumedPrompt(await memWithMemory($, project, task, cfg), task.interruptions) + taskVerifyNote(cfg, task) + taskReportNote(cfg, task.id)
     // The session dispatched it and has not compacted since: name its prompt, do not repeat it.
     const isKnown = task.isNotify && !task.isFullLaunch && task.contextEpoch === contextEpoch
     const known = isKnown ? splitKnown(full, task.dispatchPrompt ?? task.prompt) : undefined
@@ -369,6 +391,7 @@ export type NewTask = {
   why?: string
   effort?: string
   dispatchPrompt?: string
+  verify?: string
 }
 
 export async function addTasks($: E, specs: NewTask[]): Promise<string[]> {

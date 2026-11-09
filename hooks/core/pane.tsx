@@ -15,11 +15,13 @@ import {
   consolidateNow as memConsolidateNow,
   clearProject as memClearProject,
   deleteFact as memDeleteFact,
+  editFact as memEditFact,
   keepFact as memKeepFact,
   setMemoryView as memSetMemoryView,
   tabData as memTabData,
 } from '../memory/harness'
 import { memorySettingsRows, memoryTab } from '../memory/pane'
+import { SHARED_KEY } from '../memory/paths'
 import { startHud } from './hud-bridge'
 import { addTasks, applySettings, killTask, retryTask } from './queue'
 import { resumeByHand } from './standby'
@@ -423,6 +425,38 @@ export async function renderPane($: E, e: PaneEvent) {
           onSelect={(value: string) => void setSettings({ agentLaunch: value === 'plugin' ? 'plugin' : 'session' })}
         />
         <Select
+          key="orch-model"
+          label="Orchestrator model (set when a session starts)"
+          value={cfg.orchestratorModel ?? ''}
+          options={MODEL_CHOICES.map(c => ({ value: c.id, label: c.id ? c.label : 'leave as it is' }))}
+          onSelect={(value: string) => void setSettings({ orchestratorModel: value })}
+        />
+        <Select
+          key="orch-effort"
+          label="Orchestrator effort (set when a session starts)"
+          value={cfg.orchestratorEffort ?? ''}
+          options={[{ value: '', label: 'leave as it is' }, ...EFFORT_LEVELS.map(x => ({ value: x, label: x }))]}
+          onSelect={(value: string) => void setSettings({ orchestratorEffort: value })}
+        />
+        <Select
+          key="verify-rounds"
+          label="Agents verify their work"
+          value={String(cfg.verifyRounds ?? 3)}
+          options={[
+            { value: '0', label: 'off' },
+            { value: '2', label: 'up to 2 rounds' },
+            { value: '3', label: 'up to 3 rounds' },
+            { value: '5', label: 'up to 5 rounds' },
+          ]}
+          onSelect={(value: string) => void setSettings({ verifyRounds: Number(value) })}
+        />
+        <Input
+          key="verify-skill"
+          label="Verification skill to use when available (empty = none)"
+          value={cfg.verifySkill ?? ''}
+          onInput={(value: string) => void setSettings({ verifySkill: value })}
+        />
+        <Select
           key="default-task-model"
           label="Default task model"
           value={cfg.defaultTaskModel ?? ''}
@@ -545,7 +579,8 @@ export async function renderPane($: E, e: PaneEvent) {
     if (!memData) return null
     const projectOf = (key: string): Project | undefined => {
       const p = memData.projects.find(x => x.key === key)
-      return p && p.path ? { id: '', name: p.name, path: p.path } : undefined
+      // The shared memory has no folder: its facts name no files to check.
+      return p && (p.path || p.key === SHARED_KEY) ? { id: '', name: p.name, path: p.path } : undefined
     }
     return memoryTab(
       { Box, Text, Button, Select, Input },
@@ -554,6 +589,7 @@ export async function renderPane($: E, e: PaneEvent) {
         setView: patch => void memSetMemoryView($, patch),
         deleteFact: (key, id) => void memDeleteFact($, key, id).then(redraw),
         keepFact: (key, id) => void memKeepFact($, key, id).then(text => (toast(text), redraw())),
+        editFact: (key, id, text) => void memEditFact($, key, id, text).then(msg => (toast(msg), redraw())),
         consolidate: key => {
           const project = projectOf(key)
           if (!project) return toast('This project has no folder on record to check facts against.')
